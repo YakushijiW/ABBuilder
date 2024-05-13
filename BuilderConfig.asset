@@ -1,0 +1,64 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b7132217ab18e764cb545b8f767c7abe, type: 3}
+  m_Name: BuilderConfig
+  m_EditorClassIdentifier: 
+  ResPath: E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res
+  OutputPath: E:/UnityProjects/TestAB/Assets/StreamingAssets
+  buildTargetPlatform: 19
+  compressType: 1
+  MainVersion: 1
+  SubVersion: 1
+  ResourceVersion: 3
+  SaveBackupOnBuild: 1
+  ignoreFilePattern: []
+  BundleConfigs:
+  - bundleName: default pack
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res\UpdateResources
+    loadType: 0
+  - bundleName: sample_scene_pack
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Scene
+    loadType: 0
+  - bundleName: testab1
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res\TestAB1
+    loadType: 1
+  - bundleName: testab2
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res\TestAB2
+    loadType: 1
+  - bundleName: testab3
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res\TestAB3
+    loadType: 1
+  - bundleName: sample_mat
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res\Material
+    loadType: 0
+  - bundleName: testvideos
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res\TestVid
+    loadType: 0
+  - bundleName: sample_prefab
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res\Prefab
+    loadType: 0
+  - bundleName: testbundle1
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res\TestBundle1
+    loadType: 0
+  - bundleName: testbundle2
+    directories:
+    - E:\UnityProjects\TestAB\Assets\ABBuilder\Sample\Res\TestBundle2
+    loadType: 0

@@ -16,7 +16,6 @@ public class BuilderConfigScriptable : ScriptableObject
 {
     public const string ConfigName = "BuilderConfig.asset";
     public const string CatalogABName = "catalog";
-    public const string ABVariant = "asset";
 
     public string ResPath = "";
     public string OutputPath = "";

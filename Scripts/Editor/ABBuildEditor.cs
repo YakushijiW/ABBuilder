@@ -82,7 +82,7 @@ public class ABBuildEditor : Editor
             return;
         }
         #region BindAB
-        var abVariant = BuilderConfigScriptable.ABVariant;
+        var abVariant = AssetBundleManager.VARIANT_AB;
         foreach (var bundleCfg in cfg.BundleConfigs)
         {
             foreach (var dir in bundleCfg.directories)
@@ -114,8 +114,8 @@ public class ABBuildEditor : Editor
                     // 设置资产包名
                     string bundleName = GetBundleName(assetPath);
                     AssetImporter importer = AssetImporter.GetAtPath(unityAssetPath);
-                    importer.assetBundleVariant = abVariant;
                     importer.assetBundleName = bundleName;
+                    importer.assetBundleVariant = abVariant.Length > 0 ? abVariant.Substring(1, abVariant.Length - 1) : abVariant;
                 }
             }
         }
@@ -158,7 +158,7 @@ public class ABBuildEditor : Editor
             var allabs = abm.GetAllAssetBundles();
             foreach (var ab in allabs)
             {
-                var abname = ab.Substring(0, ab.Length - abVariant.Length - 1);
+                var abname = ab.Substring(0, ab.Length - abVariant.Length);
                 var abpath = Path.Combine(cfg.FinalOutputPath + $"/{ab}");
                 var size = File.ReadAllBytes(abpath).Length;
                 var md5 = Helpers.GetFileMD5(abpath);

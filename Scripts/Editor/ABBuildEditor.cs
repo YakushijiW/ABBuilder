@@ -64,7 +64,7 @@ public class ABBuildEditor : Editor
         {
             var cfg = BuilderConfigScriptable.CreateInstance<BuilderConfigScriptable>();
             cfg.SetDefault();
-            AssetDatabase.CreateAsset(cfg, "Assets/ABBuilder/" + BuilderConfigScriptable.ConfigName);
+            AssetDatabase.CreateAsset(cfg, BuilderConfigScriptable.GetConfigPath(true));
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
         }

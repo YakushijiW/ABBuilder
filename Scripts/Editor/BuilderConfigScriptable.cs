@@ -40,13 +40,21 @@ public class BuilderConfigScriptable : ScriptableObject
         OutputPath = System.IO.Path.Combine(Application.streamingAssetsPath);
         MainVersion = SubVersion = ResourceVersion = 1;
     }
-    public static string GetConfigPath()
+    public static string GetConfigPath(bool unityPath = false)
     {
-        return GetABBuilderPath()+ConfigName;
+        var path = GetABBuilderPath() + ConfigName;
+        if (unityPath)
+        {
+            path = path.Replace(Application.dataPath, "Assets");
+        }
+        return path;
     }
     public static string GetABBuilderPath()
     {
-        return System.IO.Path.Combine(Application.dataPath + $"/ABBuilder/");
+        DirectoryInfo di = new DirectoryInfo(Application.dataPath);
+        var diArr = di.GetDirectories("ABBuilder", SearchOption.AllDirectories);
+        if (diArr.Length > 1) { Debug.Log($"FolderName[ABBuilder] Duplicated"); return null; }
+        return diArr[0].FullName.Replace(@"\","/")+"/";
     }
     public static string GetConfigUnityAssetPath()
     {

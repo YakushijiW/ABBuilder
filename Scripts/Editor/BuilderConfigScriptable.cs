@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿#if UNITY_EDITOR
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
 using System.IO;
@@ -132,3 +133,5 @@ public class BuilderConfigScriptable : ScriptableObject
         return res == null ? "" : res.bundleName;
     }
 }
+
+#endif

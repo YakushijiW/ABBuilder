@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿#if UNITY_EDITOR
+using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
 using System;
@@ -478,8 +479,9 @@ public class ABBuildEditor : Editor
         var path = BuilderConfigScriptable.GetConfigPath();
         if (File.Exists(path))
         {
-            return AssetDatabase.LoadAssetAtPath<BuilderConfigScriptable>($"Assets/ABBuilder/{BuilderConfigScriptable.ConfigName}");
+            return AssetDatabase.LoadAssetAtPath<BuilderConfigScriptable>(BuilderConfigScriptable.GetConfigPath(true));
         }
         return null;
     }
 }
+#endif

@@ -20,7 +20,13 @@ public class AssetBundleManager : MonoBehaviour
 
         //updateMain, // 进入游戏后检测
 
-        update,
+        updateApp,
+
+        updateRestart,
+
+        updateEnter,
+
+        updateCatalog,
 
         error,
     }
@@ -41,10 +47,14 @@ public class AssetBundleManager : MonoBehaviour
     public int remotePort { get { return 80; } }
     public string remoteABDirectory { get { return Path.Combine($"{remoteAddress}:{remotePort}/{ABDirectoryName}"); } }
     public string localABDirectory { get { return Path.Combine(Application.persistentDataPath + $"/{ABDirectoryName}"); } }
+    public string appABDirectory { get { return Path.Combine(Application.streamingAssetsPath + $"/{ABDirectoryName}"); } }
     public string tempDownloadDirectory { get { return Path.Combine(Application.persistentDataPath + $"/temp"); } }
     
     public string localVerFilePath { get{ return Path.Combine(localABDirectory, VERSION_FILE_NAME).Replace(@"\", "/"); } }
+    public string appVerFilePath { get{ return Path.Combine(appABDirectory, VERSION_FILE_NAME).Replace(@"\", "/"); } }
+
     public string localHashFilePath { get{ return Path.Combine(localABDirectory, HASH_FILE_NAME).Replace(@"\", "/"); } }
+    public string appHashFilePath { get{ return Path.Combine(appABDirectory, HASH_FILE_NAME).Replace(@"\", "/"); } }
     
     public string ABDirectoryName
     {
@@ -71,7 +81,7 @@ public class AssetBundleManager : MonoBehaviour
 
     Dictionary<string, System.Action<AssetBundleRef>> loadingAssetBundles = new Dictionary<string, System.Action<AssetBundleRef>>();
     private Dictionary<string, AssetBundleRef> loadedAssetBundles = new Dictionary<string, AssetBundleRef>();
-    bool isInitABRef;
+    public bool IsInitABRef { get; private set; }
     Dictionary<string, List<string>> dicABDependencies = new Dictionary<string, List<string>>();
     Dictionary<string, string> dicSceneAssetBundle = new Dictionary<string, string>();
     Dictionary<string, string> dicAssetABName = new Dictionary<string, string>();
@@ -83,7 +93,7 @@ public class AssetBundleManager : MonoBehaviour
         {
             if (instance == null)
             {
-                instance = FindObjectOfType<AssetBundleManager>();
+                instance = GameObject.FindAnyObjectByType<AssetBundleManager>();
                 if (instance == null)
                 {
                     GameObject obj = new GameObject("AssetBundleManager");
@@ -134,24 +144,11 @@ public class AssetBundleManager : MonoBehaviour
 
     IEnumerator CheckVersion(System.Action<CheckVersionResult, string> onFinished = null)
     {
-        var localVersionFilePath = localVerFilePath;
-        var remoteVersionPath = Path.Combine(remoteABDirectory, VERSION_FILE_NAME).Replace(@"\", "/");
-
-        var localHashPath = localHashFilePath;
-        var remoteHashFilePath = Path.Combine(remoteABDirectory, HASH_FILE_NAME).Replace(@"\", "/");
-
-        int localMainVer = 0, localSubVer = 0, localResVer = 0,
+        int localMainVer = Catalog.MainVersion, localSubVer = Catalog.SubVersion, localResVer = Catalog.ResVersion,
             remoteMainVer = 0, remoteSubVer = 0, remoteResVer = 0;
-        bool canEnterGame = File.Exists(localVersionFilePath);
-        if (canEnterGame)
-        {
-            var line1 = File.ReadAllLines(localVersionFilePath)[0];
-            var vers = line1.Split('.');
-            localMainVer = int.Parse(vers[0]);
-            localSubVer = int.Parse(vers[1]);
-            localResVer = int.Parse(vers[2]);
-        }
 
+        var remoteVersionPath = Path.Combine(remoteABDirectory, VERSION_FILE_NAME).Replace(@"\", "/");
+        var remoteHashFilePath = Path.Combine(remoteABDirectory, HASH_FILE_NAME).Replace(@"\", "/");
         var reqVer = UnityWebRequest.Get(remoteVersionPath);
         yield return reqVer.SendWebRequest();
         if (!string.IsNullOrEmpty(reqVer.error)) { onFinished?.Invoke(CheckVersionResult.error, reqVer.error); yield break; }
@@ -161,22 +158,19 @@ public class AssetBundleManager : MonoBehaviour
         remoteSubVer = int.Parse(remoteVers[1]);
         remoteResVer = int.Parse(remoteVers[2]);
 
-        if (localMainVer < remoteMainVer || localSubVer < remoteSubVer || localResVer < remoteResVer)
+        CheckVersionResult result;
+        if (localMainVer < remoteMainVer)
         {
-            canEnterGame = false;
-        }
-
-        if (canEnterGame)
-        {
-            onFinished?.Invoke(CheckVersionResult.success, "");
+            result = CheckVersionResult.updateApp;
+            onFinished?.Invoke(result, "");
             yield break;
         }
-
-        //var newApkName = $"gamename_{remoteMainVer}.{remoteSubVer}.{remoteResVer}.apk";
-        //var remoteNewApkPath = Path.Combine($"{remoteAddress}:{remotePort}/Apk/{newApkName}");
-        //var reqNewApp = UnityWebRequest.Head(remoteNewApkPath);
-        //yield return reqNewApp.SendWebRequest();
-        //if (string.IsNullOrEmpty(reqNewApp.error)) { onFinished?.Invoke(CheckVersionResult.updateMain,""); yield break; }
+        else if (localSubVer >= remoteSubVer && localResVer >= remoteResVer)
+        {
+            result = CheckVersionResult.success;
+            onFinished?.Invoke(result, "");
+            yield break;
+        }
 
         // CompareHashes
         UnityWebRequest reqHash = UnityWebRequest.Get(remoteHashFilePath);
@@ -187,6 +181,17 @@ public class AssetBundleManager : MonoBehaviour
         var lines = strHashRemote.Split(HASH_FILE_SPLITER);
 
         var updateABList = new List<ABHashInfo>();
+
+        var strHashLocal = "";
+        try
+        {
+            strHashLocal = File.Exists(localHashFilePath) ? File.ReadAllText(localHashFilePath) : File.ReadAllText(appHashFilePath);
+        }
+        catch
+        {
+            Debug.LogError($"Can NOT find hash file!!");
+            yield break;
+        }
 
         foreach (var line in lines)
         {
@@ -225,11 +230,6 @@ public class AssetBundleManager : MonoBehaviour
             }
             else
             {
-                var strHashLocal = "";
-                if (File.Exists(localHashPath))
-                    strHashLocal = File.ReadAllText(localHashPath);
-                else
-                    continue;
                 Dictionary<string, ABHashInfo> dicLocalHash = new Dictionary<string, ABHashInfo>();
                 if (!string.IsNullOrEmpty(strHashLocal))
                 {
@@ -266,14 +266,17 @@ public class AssetBundleManager : MonoBehaviour
         }
 
         ulong totalSize = 0;
-        string strUpdateList = MARK_SUCCESS+ HASH_FILE_SPLITER;
+        string strUpdateList = MARK_SUCCESS + HASH_FILE_SPLITER;
         foreach (var item in updateABList)
         {
             strUpdateList += ABHashInfo.ToString(item) + HASH_FILE_SPLITER;
             totalSize += (ulong)item.size;
         }
+        if (totalSize == 0) { onFinished?.Invoke(CheckVersionResult.updateCatalog, strUpdateList); yield break; }
+
         strUpdateList += totalSize;
-        onFinished?.Invoke(CheckVersionResult.update, strUpdateList);
+
+        onFinished?.Invoke(localResVer < remoteResVer ? CheckVersionResult.updateEnter : CheckVersionResult.updateRestart, strUpdateList);
     }
 
     public void StartGameDownload(string abInfoList, System.Action<string> onFinished = null, ABDownloadTask.OnABDownloadProgress onProgress = null)
@@ -453,18 +456,27 @@ public class AssetBundleManager : MonoBehaviour
         }
         onGetSize?.Invoke(System.Math.Max(0,totalSize - existedSize));
     }
-    
+
+    /// <summary>
+    /// 暂不支持该功能，总是return true
+    /// </summary>
+    /// <param name="size">unit: byte</param>
+    /// <param name="saveDir">finalDirectory</param>
+    /// <returns></returns>
     public bool CheckFreeSpace(long size, string saveDir = null)
     {
         if (string.IsNullOrEmpty(saveDir)) { saveDir = localABDirectory; }
         long freeSpace = 0;
 
 #if UNITY_EDITOR || UNITY_STANDALONE_WIN
-        var dis = DriveInfo.GetDrives();
+        /*
+        var dis = DriveInfo.GetDrives(); // 该功能无法通过编译
         var diskName = saveDir.Split(':')[0];
         foreach (var di in dis)
             if (di.Name.Split(':')[0] == diskName) { freeSpace = di.TotalFreeSpace; break; }
         return freeSpace > size;
+        */
+        return true;
 #elif UNITY_ANROID
         // unchecked
         return true;
@@ -516,41 +528,65 @@ public class AssetBundleManager : MonoBehaviour
     }
 
     #endregion
-
+    public IEnumerator InitAsync()
+    {
+        string ver, hash;
+        if (File.Exists(localVerFilePath) && File.Exists(localHashFilePath))
+        {
+            var t1 = File.ReadAllTextAsync(localVerFilePath, System.Text.Encoding.UTF8);
+            var t2 = File.ReadAllTextAsync(localHashFilePath, System.Text.Encoding.UTF8);
+            while (t1.IsCompleted)
+            {
+                yield return null;
+            }
+            ver = t1.Result;
+            hash = t2.Result;
+        }
+        else if (File.Exists(appVerFilePath) && File.Exists(appHashFilePath))
+        {
+            var t1 = File.ReadAllTextAsync(appVerFilePath, System.Text.Encoding.UTF8);
+            var t2 = File.ReadAllTextAsync(appHashFilePath, System.Text.Encoding.UTF8);
+            while (t1.IsCompleted)
+            {
+                yield return null;
+            }
+            ver = t1.Result;
+            hash = t2.Result;
+        }
+        else
+        {
+            ver = hash = null;
+            Debug.LogError($"Cannot find Version or Hash file!!");
+            yield break;
+        }
+        Catalog = AssetBundleCatalog.Parse(ver, hash);
+        if (Catalog == null || Catalog.MainVersion == 0)
+        {
+            Debug.LogError($"InitABRefrence FAILED: mainVersion NOT valid]");
+            yield break;
+        }
+        Debug.Log($"Init version success!! [{Catalog.MainVersion}.{Catalog.SubVersion}.{Catalog.ResVersion}]");
+    }
     public void InitializeOnStart(System.Action<string> onFinished)
     {
-        if (isInitABRef) return;
+        if (IsInitABRef) return;
 
-        var localMainABPath = Path.Combine(localABDirectory + "/" + ABDirectoryName);
-        if (!File.Exists(localMainABPath))
+        var mainABPath = Path.Combine(localABDirectory, ABDirectoryName);
+        if (!File.Exists(mainABPath))
         {
-            onFinished?.Invoke($"InitABRefrence FAILED: MainAB NOT found at path[{localMainABPath}]");
+            onFinished?.Invoke($"InitABRefrence FAILED: MainAB NOT found at path[{mainABPath}]");
             return;
         }
-
-        main = AssetBundle.LoadFromFile(localMainABPath);
+        mainABPath = Path.Combine(appABDirectory, ABDirectoryName);
+        if (!File.Exists(mainABPath))
+        {
+            onFinished?.Invoke($"InitABRefrence FAILED: MainAB NOT found at path[{mainABPath}]");
+            return;
+        }
+        main = AssetBundle.LoadFromFile(mainABPath);
         if (main == null) { onFinished?.Invoke("InitABRefrence FAILED: MainAB Null"); return; }
         manifest = main.LoadAsset<AssetBundleManifest>("AssetBundleManifest");
         if (manifest == null) { onFinished?.Invoke("InitABRefrence FAILED: AssetBundleManifest Null"); return; }
-
-        var localVersionPath = Path.Combine(localABDirectory + "/" + VERSION_FILE_NAME);
-        if (!File.Exists(localVersionPath))
-        {
-            onFinished?.Invoke($"InitABRefrence FAILED: version file NOT found at path[{localVersionPath}]");
-            return;
-        }
-        var localHashPath = localHashFilePath;
-        if (!File.Exists(localHashPath))
-        {
-            onFinished?.Invoke($"InitABRefrence FAILED: hash file NOT found at path[{localHashPath}]");
-            return;
-        }
-        Catalog = AssetBundleCatalog.Parse(File.ReadAllText(localVersionPath), File.ReadAllText(localHashPath));
-        if (Catalog == null || Catalog.mainVersion == 0)
-        {
-            onFinished?.Invoke($"InitABRefrence FAILED: mainVersion NOT valid]");
-            return;
-        }
 
         foreach (var abFile in manifest.GetAllAssetBundles())
         {
@@ -603,9 +639,93 @@ public class AssetBundleManager : MonoBehaviour
             ab.Unload(false);
         }
 
-        isInitABRef = true;
+        IsInitABRef = true;
         onFinished?.Invoke("success");
     }
+    public IEnumerator InitializeOnStartAsync()
+    {
+        if (IsInitABRef) yield break;
+
+        var mainABPath = Path.Combine(localABDirectory, ABDirectoryName);
+        if (!File.Exists(mainABPath))
+        {
+            Debug.Log($"InitABRefrence FAILED: MainAB NOT found at path[{mainABPath}]");
+            yield break;
+        }
+        mainABPath = Path.Combine(appABDirectory, ABDirectoryName);
+        if (!File.Exists(mainABPath))
+        {
+            Debug.Log($"InitABRefrence FAILED: MainAB NOT found at path[{mainABPath}]");
+            yield break;
+        }
+
+        var mReq = AssetBundle.LoadFromFileAsync(mainABPath);
+        while (!mReq.isDone) yield return null;
+        main = mReq.assetBundle;
+        if (main == null) { Debug.Log("InitABRefrence FAILED: MainAB Null"); yield break; }
+
+        var mReq2 = main.LoadAssetAsync<AssetBundleManifest>("AssetBundleManifest");
+        while (!mReq2.isDone) yield return null;
+        manifest = mReq2.asset as AssetBundleManifest;
+        if (manifest == null) { Debug.Log("InitABRefrence FAILED: AssetBundleManifest Null"); yield break; }
+
+        foreach (var abFile in manifest.GetAllAssetBundles())
+        {
+            var abPath = Path.Combine(localABDirectory + "/" + abFile);
+            var abName = abFile.Substring(0, abFile.Length - VARIANT_AB.Length);
+
+            var depedencies = new List<string>();
+            foreach (var dp in manifest.GetAllDependencies(abFile))
+                depedencies.Add(dp.Substring(0, dp.Length - VARIANT_AB.Length));
+            dicABDependencies[abName] = depedencies;
+
+            Catalog.bundles.TryGetValue(abName, out var aBCatalogInfo);
+            if (aBCatalogInfo == null) continue;
+            dicABLoadType[abName] = aBCatalogInfo.type;
+
+            if (!File.Exists(abPath)) continue;
+            var abreq = AssetBundle.LoadFromFileAsync(abPath);
+            while (!abreq.isDone) yield return null;
+            var ab = abreq.assetBundle;
+            if (ab == null) { Debug.Log($"InitABRefrence FAILED: AssetBundle LoadFromFile [{abPath}] Null"); yield break; }
+
+            foreach (var item in ab.GetAllAssetNames())
+            {
+                var dirs = item.Split('/');
+                var assetFile = dirs[dirs.Length - 1];
+                var parts = assetFile.Split('.');
+                var assetName = parts[0];
+
+                string variant = "";
+                for (int i = 1; i < parts.Length; i++)
+                    variant += parts[i];
+
+                Debug.Log($"AB[{abName}] assetName[{assetName}]");
+                if (variant == ".unity")
+                {
+                    dicSceneAssetBundle[assetName] = abName;
+                    Debug.Log($"AB[{abName}] Scene[{assetName}]");
+                }
+
+                // Tips: asset name cannot be the same
+                dicAssetABName[assetName] = abName;
+            }
+
+            var scenePaths = ab.GetAllScenePaths();
+            foreach (var scene in scenePaths)
+            {
+                var parts = scene.Split('/');
+                var fileName = parts[parts.Length - 1];
+                var sceneName = fileName.Substring(0, fileName.Length - 6); // ".unity".Length
+                dicSceneAssetBundle[sceneName] = abName;
+            }
+            ab.Unload(false);
+        }
+
+        IsInitABRef = true;
+        Debug.Log("success");
+    }
+
     void InitializeInGame(List<string> abNames)
     {
         foreach (var abName in abNames)
@@ -856,7 +976,9 @@ public class AssetBundleManager : MonoBehaviour
 public class AssetBundleCatalog
 {
     public Dictionary<string, ABHashInfo> bundles = new Dictionary<string, ABHashInfo>();
-    public int mainVersion, subVersion, resVersion;
+    public int MainVersion { get; private set; } = 0;
+    public int SubVersion { get; private set; } = 0;
+    public int ResVersion { get; private set; } = 0;
     public static AssetBundleCatalog Parse(string ver, string hash)
     {
         AssetBundleCatalog res = new AssetBundleCatalog();
@@ -864,9 +986,9 @@ public class AssetBundleCatalog
         {
             var versionInfoLine = ver;
             var parts1 = versionInfoLine.Split(AssetBundleManager.VERSION_FILE_SPLITER);
-            res.mainVersion = int.Parse(parts1[0]);
-            res.subVersion = int.Parse(parts1[1]);
-            res.resVersion = int.Parse(parts1[2]);
+            res.MainVersion = int.Parse(parts1[0]);
+            res.SubVersion = int.Parse(parts1[1]);
+            res.ResVersion = int.Parse(parts1[2]);
             var lines = hash.Split(AssetBundleManager.HASH_FILE_SPLITER);
             for (int i = 0; i < lines.Length; i++)
             {

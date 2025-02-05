@@ -28,12 +28,9 @@ public class ABBuilderTester : MonoBehaviour
 
     private void Awake()
     {
-        DontDestroyOnLoad(gameObject);
-    }
-    private void Start()
-    {
-        rtLogContent = txtLog.transform.parent.GetComponent<RectTransform>();
+        DontDestroyOnLoad (gameObject);
 
+        rtLogContent = txtLog.transform.parent.GetComponent<RectTransform>();
         btnClearLog.onClick.RemoveAllListeners();
         btnClearLog.onClick.AddListener(OnClickClearLog);
         btnStart.onClick.RemoveAllListeners();
@@ -48,29 +45,30 @@ public class ABBuilderTester : MonoBehaviour
         btnShowVid.onClick.AddListener(OnClickShowVid);
         btnCheckComplete.onClick.RemoveAllListeners();
         btnCheckComplete.onClick.AddListener(OnClickCheckComplete);
-
         togManual.onValueChanged.AddListener((b) => { goManual.SetActive(b); });
-
+    }
+    private void Start()
+    {
+        StartCoroutine(InitGame());
+    }
+    IEnumerator InitGame()
+    {
+        yield return AssetBundleManager.Instance.InitAsync();
         AssetBundleManager.Instance.CheckUpdate((result, str1) =>
         {
-            if (result == AssetBundleManager.CheckVersionResult.error)
+            switch (result)
             {
-                Log(str1);
-                return;
-            }
-            else if (result == AssetBundleManager.CheckVersionResult.success)
-            {
-                RefreshStartGame();
-            }
-            else
-            {
-                switch (result)
-                {
-                    //case AssetBundleManager.CheckVersionResult.updateMain:
-                    //    ShowConfirm($"Need to download new app", () => { Log("Go to any link to download"); }, () => { Application.Quit(); });
-                    //    break;
-                    case AssetBundleManager.CheckVersionResult.update:
-                        // update
+                case AssetBundleManager.CheckVersionResult.error:
+                    Log(str1);
+                    break;
+                case AssetBundleManager.CheckVersionResult.success:
+                    RefreshStartGame();
+                    break;
+                case AssetBundleManager.CheckVersionResult.updateApp:
+                    ShowConfirm($"Need to download new app", () => { Log("Go link [exapmle.com] to download"); }, () => { Application.Quit(); });
+                    break;
+                case AssetBundleManager.CheckVersionResult.updateCatalog:
+                    {
                         var list = System.Linq.Enumerable.ToList(str1.Split(AssetBundleManager.HASH_FILE_SPLITER));
                         long.TryParse(list[list.Count - 1], out var size);
                         if (size < 1)
@@ -83,9 +81,15 @@ public class ABBuilderTester : MonoBehaviour
                                 goProgress.SetActive(false);
                                 RefreshStartGame();
                             });
-                            return;
                         }
-                        Debug.Log("UpdateList: \n"+ str1);
+                    }
+                    break;
+                case AssetBundleManager.CheckVersionResult.updateEnter:
+                case AssetBundleManager.CheckVersionResult.updateRestart:
+                    {
+                        var list = System.Linq.Enumerable.ToList(str1.Split(AssetBundleManager.HASH_FILE_SPLITER));
+                        long.TryParse(list[list.Count - 1], out var size);
+                        Debug.Log("UpdateList: \n" + str1);
                         bool success = list.Count > 0 && list[0] == AssetBundleManager.MARK_SUCCESS;
                         if (success)
                         {
@@ -98,31 +102,36 @@ public class ABBuilderTester : MonoBehaviour
                                 }
                                 string updateContent = "";
                                 for (int i = 1; i < list.Count - 1; i++)
-                                    updateContent+=list[i]+ AssetBundleManager.HASH_FILE_SPLITER;
+                                    updateContent += list[i] + AssetBundleManager.HASH_FILE_SPLITER;
                                 //float debugTime = 0;
                                 AssetBundleManager.Instance.StartGameDownload(updateContent, (str2) =>
                                 {
                                     Log($"All Update Finished");
                                     goProgress.SetActive(false);
-                                    ShowConfirm("All update finished, enter game ", () => { RefreshStartGame(); }, () => { Application.Quit(); });
-                                }, 
-                                (FileName, FileIndex, CurDownloaded, Progress, TotalDownloaded, Speed, FailedCount) =>
-                                {
-                                    //if (debugTime < Time.time)
-                                    //{
-                                        RefreshProgress(size, list.Count - 2, FileName, FileIndex, CurDownloaded, Progress, TotalDownloaded, Speed, FailedCount);
-                                    //}
-                                });
+                                    if (result == AssetBundleManager.CheckVersionResult.updateEnter)
+                                        ShowConfirm("All update finished, enter game ", RefreshStartGame, Application.Quit);
+                                    else
+                                        ShowConfirm("All update finished, restart game ", Application.Quit, Application.Quit);
+
+                                },
+                                    (FileName, FileIndex, CurDownloaded, Progress, TotalDownloaded, Speed, FailedCount) =>
+                                    {
+                                            //if (debugTime < Time.time)
+                                            //{
+                                            RefreshProgress(size, list.Count - 2, FileName, FileIndex, CurDownloaded, Progress, TotalDownloaded, Speed, FailedCount);
+                                            //}
+                                        });
                             }, () => { Application.Quit(); });
                         }
                         else
                         {
                             Log(str1);
                         }
-                        break;
-                }
+                    }
+                    break;
             }
         });
+        yield break;
     }
     void RefreshStartGame()
     {
@@ -196,12 +205,16 @@ public class ABBuilderTester : MonoBehaviour
 
     public void OnClickStart()
     {
-        AssetBundleManager.Instance.InitializeOnStart((s1) => { Debug.Log(s1);
-            AssetBundleManager.Instance.LoadSceneAsync("ABBuilderSampleScene2",
+        StartCoroutine(StartGame());
+    }
+    IEnumerator StartGame()
+    {
+        yield return AssetBundleManager.Instance.InitializeOnStartAsync();
+        if (AssetBundleManager.Instance.IsInitABRef) yield break;
+        AssetBundleManager.Instance.LoadSceneAsync("ABBuilderSampleScene2",
             UnityEngine.SceneManagement.LoadSceneMode.Single,
             (s) => { Log("LoadSceneAsyncFinished: " + s); if (string.IsNullOrEmpty(s)) RefreshStarted(); },
             (progress) => { Log(progress.ToString()); });
-        });
     }
     public void OnClickSpawn()
     {
@@ -251,39 +264,6 @@ public class ABBuilderTester : MonoBehaviour
                     ShowConfirm("No enough free space to download game resource");
                 }
             });
-            /*
-            if (size > 0)
-            {
-                ShowConfirm($"Need download {(size / 1024f).ToString("0.##")} kb game resource to spawn this object", () =>
-                {
-                    if (AssetBundleManager.Instance.CheckFreeSpace(size))
-                    {
-                        AssetBundleManager.Instance.DownloadABInGame(lv1ABList, (FileName, FileIndex, CurDownloaded, Progress, TotalDownloaded, Speed) =>
-                        {
-                            Log($"Downloading FileName [{FileName}]," +
-                                $" FileIndex[{FileIndex}]," +
-                                $" CurDownloaded[{CurDownloaded}]," +
-                                $" Progress[{Progress.ToString("0.##")}]," +
-                                $" TotalDownloaded[{TotalDownloaded}],'" +
-                                $" Speed[{Speed}]kb/s");
-                        }, (s) => {
-                            if (!string.IsNullOrEmpty(s)) { Log(s); return; }
-                            var go = AssetBundleManager.Instance.GetAsset<GameObject>("gotest1");
-                            Instantiate(go, goSpawnRoot.transform);
-                        });
-                    }
-                    else
-                    {
-                        ShowConfirm("No enough free space to download game resource");
-                    }
-                });
-            }
-            else
-            {
-                var go = AssetBundleManager.Instance.GetAsset<GameObject>("gotest1");
-                Instantiate(go, goSpawnRoot.transform);
-            }
-            */
         });
     }
     public void OnClickShowVid()

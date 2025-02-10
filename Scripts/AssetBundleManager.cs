@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine.Networking;
 using UnityEngine.SceneManagement;
+using XLua;
 
 public enum BundleLoadType
 {
@@ -43,6 +44,12 @@ public class AssetBundleManager : MonoBehaviour
     public const char HASH_FILE_SPLITER = '\n';
     public const string VARIANT_AB = ".asset";
 
+    public static readonly List<string> APP_AB_NAMES = new List<string>
+    {
+        "static_bundle",
+
+    };
+
     public string remoteAddress { get { return "localhost"; } }
     public int remotePort { get { return 80; } }
     public string remoteABDirectory { get { return Path.Combine($"{remoteAddress}:{remotePort}/{ABDirectoryName}"); } }
@@ -55,7 +62,7 @@ public class AssetBundleManager : MonoBehaviour
 
     public string localHashFilePath { get{ return Path.Combine(localABDirectory, HASH_FILE_NAME).Replace(@"\", "/"); } }
     public string appHashFilePath { get{ return Path.Combine(appABDirectory, HASH_FILE_NAME).Replace(@"\", "/"); } }
-    
+
     public string ABDirectoryName
     {
         get
@@ -98,13 +105,23 @@ public class AssetBundleManager : MonoBehaviour
                 {
                     GameObject obj = new GameObject("AssetBundleManager");
                     instance = obj.AddComponent<AssetBundleManager>();
-                    DontDestroyOnLoad(instance.gameObject);
                 }
             }
             return instance;
         }
     }
+    private void Awake()
+    {
+        if (instance == null)
+            instance = this;
+        else if (instance != null)
+        {
+            Destroy(gameObject);
+            return;
+        }
 
+        DontDestroyOnLoad(gameObject);
+    }
     private void OnDestroy()
     {
         UnloadAllAssetBundles();
@@ -566,6 +583,75 @@ public class AssetBundleManager : MonoBehaviour
             yield break;
         }
         Debug.Log($"Init version success!! [{Catalog.MainVersion}.{Catalog.SubVersion}.{Catalog.ResVersion}]");
+
+        string appManifestPath = Path.Combine(appABDirectory, ABDirectoryName);
+        if (!File.Exists(appManifestPath)) { Debug.Log($"InitAppAssetBundlesAsync FAILED!! manifest not found"); yield break; }
+        var manifestReq = AssetBundle.LoadFromFileAsync(appManifestPath);
+        while (!manifestReq.isDone)
+            yield return null;
+        var mainAB = manifestReq.assetBundle;
+
+        var reqManifest = mainAB.LoadAssetAsync<AssetBundleManifest>("AssetBundleManifest");
+        while (!reqManifest.isDone) yield return null;
+        var appManifest = reqManifest.asset as AssetBundleManifest;
+        if (appManifest == null) { Debug.Log($"InitAppAssetBundlesAsync FAILED!! manifest not found"); yield break; }
+
+        foreach (var abFile in appManifest.GetAllAssetBundles())
+        {
+            var abPath = Path.Combine(localABDirectory + "/" + abFile);
+            var abName = abFile.Substring(0, abFile.Length - VARIANT_AB.Length);
+            if (!APP_AB_NAMES.Contains(abName)) { continue; }
+
+            var depedencies = new List<string>();
+            foreach (var dp in appManifest.GetAllDependencies(abFile))
+                depedencies.Add(dp.Substring(0, dp.Length - VARIANT_AB.Length));
+            dicABDependencies[abName] = depedencies;
+
+            Catalog.bundles.TryGetValue(abName, out var aBCatalogInfo);
+            if (aBCatalogInfo == null) continue;
+            dicABLoadType[abName] = aBCatalogInfo.type;
+
+            if (!File.Exists(abPath)) continue;
+            var abReq = AssetBundle.LoadFromFileAsync(abPath);
+            while (!abReq.isDone)
+                yield return null;
+            var ab = abReq.assetBundle;
+            if (ab == null) { Debug.Log($"AssetBundle LoadFromFile [{abPath}] Null"); continue; }
+
+            foreach (var item in ab.GetAllAssetNames())
+            {
+                var dirs = item.Split('/');
+                var assetFile = dirs[dirs.Length - 1];
+                var parts = assetFile.Split('.');
+                var assetName = parts[0];
+
+                string variant = "";
+                for (int i = 1; i < parts.Length; i++)
+                    variant += parts[i];
+
+                Debug.Log($"AB[{abName}] assetName[{assetName}]");
+                if (variant == ".unity")
+                {
+                    dicSceneAssetBundle[assetName] = abName;
+                    Debug.Log($"AB[{abName}] Scene[{assetName}]");
+                }
+
+                // Tips: asset name cannot be the same
+                dicAssetABName[assetName] = abName;
+            }
+
+            var scenePaths = ab.GetAllScenePaths();
+            foreach (var scene in scenePaths)
+            {
+                var parts = scene.Split('/');
+                var fileName = parts[parts.Length - 1];
+                var sceneName = fileName.Substring(0, fileName.Length - 6); // ".unity".Length
+                dicSceneAssetBundle[sceneName] = abName;
+            }
+            ab.Unload(false);
+        }
+        manifest = appManifest;
+        main = mainAB;
     }
     public void InitializeOnStart(System.Action<string> onFinished)
     {

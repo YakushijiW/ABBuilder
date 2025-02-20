@@ -10,6 +10,7 @@ using System.IO;
 public class BuilderConfigInspector : Editor
 {
     BuilderConfigScriptable instance;
+    bool openHeader1 = false;
 
     private void OnEnable()
     {
@@ -20,6 +21,18 @@ public class BuilderConfigInspector : Editor
     {
         base.OnInspectorGUI();
 
+        EditorGUILayout.Space();
+
+        openHeader1 = EditorGUILayout.BeginFoldoutHeaderGroup(openHeader1, $"AES Encrypt:");
+        if (openHeader1)
+        {
+            EditorGUILayout.LabelField($"EncryptKey = " + ABBuildConfig.BundleEncryptKey);
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField($"EncryptIV = " + ABBuildConfig.BundleEncryptIV);
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Change settings at script: ABBuildConfig");
+        }
+        EditorGUILayout.EndFoldoutHeaderGroup();
         EditorGUILayout.Space();
 
         EditorGUILayout.BeginHorizontal();

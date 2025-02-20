@@ -23,18 +23,17 @@ public class BuilderConfigScriptable : ScriptableObject
     {
         get
         {
-            return System.IO.Path.Combine(OutputPath + "/" +buildTargetPlatform);
+            return System.IO.Path.Combine(OutputPath, buildTargetPlatform.ToString());
         }
     }
     public BuildTarget buildTargetPlatform = BuildTarget.StandaloneWindows64;
     public ABCompressType compressType = ABCompressType.LZ4;
     public int MainVersion, SubVersion, ResourceVersion;
     public bool SaveBackupOnBuild = true;
-
     [Space]
     public List<string> ignoreFilePattern = new List<string>();
     [Space]
-    public List<BundleConfig> BundleConfigs = new List<BundleConfig>();
+    public List<BundleData> BundleDatas = new();
     public void SetDefault()
     {
         OutputPath = System.IO.Path.Combine(Application.streamingAssetsPath);
@@ -77,9 +76,9 @@ public class BuilderConfigScriptable : ScriptableObject
         }
     }
 
-    public BundleConfig GetBundleConfig(string abName)
+    public BundleData GetBundleData(string abName)
     {
-        return BundleConfigs.Find((a) => { return a.bundleName == abName.ToLower(); });
+        return BundleDatas.Find((a) => { return a.bundleName == abName.ToLower(); });
     }
 
     public static BuilderConfigScriptable Save(BuilderConfigScriptable a)
@@ -94,7 +93,7 @@ public class BuilderConfigScriptable : ScriptableObject
         cfgnew.ResourceVersion = a.ResourceVersion;
         cfgnew.SaveBackupOnBuild = a.SaveBackupOnBuild;
         cfgnew.ignoreFilePattern = a.ignoreFilePattern;
-        cfgnew.BundleConfigs = a.BundleConfigs;
+        cfgnew.BundleDatas = a.BundleDatas;
         var cfgPath = GetConfigPath();
         var metaPath = cfgPath + ".meta";
         if (File.Exists(cfgPath))
@@ -111,17 +110,9 @@ public class BuilderConfigScriptable : ScriptableObject
         return cfgnew;
     }
 
-    [System.Serializable]
-    public class BundleConfig
-    {
-        public string bundleName = "";
-        public List<string> directories = new List<string>();
-        public BundleLoadType loadType;
-    }
-
     public string GetBundleName(string fileName)
     {
-        var res = BundleConfigs.Find((bnd) =>
+        var res = BundleDatas.Find((bnd) =>
         {
             var d = bnd.directories.Find((dir) =>
             {

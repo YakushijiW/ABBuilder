@@ -53,9 +53,12 @@ public class ABBuilderTester : MonoBehaviour
     }
     IEnumerator InitGame()
     {
-        yield return AssetBundleManager.Instance.InitAsync();
-        AssetBundleManager.Instance.CheckUpdate((result, str1) =>
+        Debug.Log($"Start InitAsync");
+        yield return AssetBundleManager.Instance.CoInit();
+        Debug.Log($"Start CheckUpdate");
+        AssetBundleManager.Instance.CheckUpdateAsync((result, str1) =>
         {
+            Debug.Log($"CheckUpdate finished with result [{result}]: {str1}");
             switch (result)
             {
                 case AssetBundleManager.CheckVersionResult.error:
@@ -69,12 +72,12 @@ public class ABBuilderTester : MonoBehaviour
                     break;
                 case AssetBundleManager.CheckVersionResult.updateCatalog:
                     {
-                        var list = System.Linq.Enumerable.ToList(str1.Split(AssetBundleManager.HASH_FILE_SPLITER));
+                        var list = System.Linq.Enumerable.ToList(str1.Split(ABBuildConfig.HASH_FILE_SPLITER));
                         long.TryParse(list[list.Count - 1], out var size);
                         if (size < 1)
                         {
                             // Update version & hash files only
-                            AssetBundleManager.Instance.StartGameDownload("", (s) =>
+                            AssetBundleManager.Instance.UpdateGameAsync("", (s) =>
                             {
                                 // Enter game
                                 Log($"All Update Finished");
@@ -87,7 +90,7 @@ public class ABBuilderTester : MonoBehaviour
                 case AssetBundleManager.CheckVersionResult.updateEnter:
                 case AssetBundleManager.CheckVersionResult.updateRestart:
                     {
-                        var list = System.Linq.Enumerable.ToList(str1.Split(AssetBundleManager.HASH_FILE_SPLITER));
+                        var list = System.Linq.Enumerable.ToList(str1.Split(ABBuildConfig.HASH_FILE_SPLITER));
                         long.TryParse(list[list.Count - 1], out var size);
                         Debug.Log("UpdateList: \n" + str1);
                         bool success = list.Count > 0 && list[0] == AssetBundleManager.MARK_SUCCESS;
@@ -102,9 +105,9 @@ public class ABBuilderTester : MonoBehaviour
                                 }
                                 string updateContent = "";
                                 for (int i = 1; i < list.Count - 1; i++)
-                                    updateContent += list[i] + AssetBundleManager.HASH_FILE_SPLITER;
+                                    updateContent += list[i] + ABBuildConfig.HASH_FILE_SPLITER;
                                 //float debugTime = 0;
-                                AssetBundleManager.Instance.StartGameDownload(updateContent, (str2) =>
+                                AssetBundleManager.Instance.UpdateGameAsync(updateContent, (str2) =>
                                 {
                                     Log($"All Update Finished");
                                     goProgress.SetActive(false);
@@ -209,8 +212,7 @@ public class ABBuilderTester : MonoBehaviour
     }
     IEnumerator StartGame()
     {
-        yield return AssetBundleManager.Instance.InitializeOnStartAsync();
-        if (AssetBundleManager.Instance.IsInitABRef) yield break;
+        yield return AssetBundleManager.Instance.CoInitializeOnStart();
         AssetBundleManager.Instance.LoadSceneAsync("ABBuilderSampleScene2",
             UnityEngine.SceneManagement.LoadSceneMode.Single,
             (s) => { Log("LoadSceneAsyncFinished: " + s); if (string.IsNullOrEmpty(s)) RefreshStarted(); },
@@ -290,7 +292,7 @@ public class ABBuilderTester : MonoBehaviour
             {
                 float debugTime = 0;
                 int totalCount = 0;
-                var list = s.Split(AssetBundleManager.HASH_FILE_SPLITER);
+                var list = s.Split(ABBuildConfig.HASH_FILE_SPLITER);
                 if (list.Length > 1)
                     totalCount = list.Length - 1;
                 else
@@ -310,7 +312,7 @@ public class ABBuilderTester : MonoBehaviour
                     }
                 };
                 Log("Broken files count = " + (list.Length - 1));
-                AssetBundleManager.Instance.StartGameDownload(s, (msg) =>
+                AssetBundleManager.Instance.UpdateGameAsync(s, (msg) =>
                 {
                     Log($"All Update Finished");
                     goProgress.SetActive(false);

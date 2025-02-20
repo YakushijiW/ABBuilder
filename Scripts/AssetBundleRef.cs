@@ -4,7 +4,7 @@ using UnityEngine;
 public class AssetBundleRef
 {
     public AssetBundle bundle;
-    public BundleLoadType type;
+    public ABType type;
     public List<AssetBundleRef> dependencies;
     public AssetBundleRef(AssetBundle bundle)
     {

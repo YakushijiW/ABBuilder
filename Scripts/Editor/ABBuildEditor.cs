@@ -4,10 +4,34 @@ using UnityEngine;
 using System.IO;
 using System;
 using UnityEditor;
+using System.Security.Cryptography;
 
 public class ABBuildEditor : Editor
 {
+    public static void EncryptAssetBundle(string inputPath, string outputPath, byte[] key)
+    {
+        // 读取原始 AssetBundle 数据
+        byte[] rawData = File.ReadAllBytes(inputPath);
 
+        // 使用 AES 加密（示例）
+        using (Aes aes = Aes.Create())
+        {
+            aes.Key = key;
+            aes.GenerateIV(); // 生成随机 IV
+
+            using (ICryptoTransform encryptor = aes.CreateEncryptor())
+            {
+                byte[] encryptedData = encryptor.TransformFinalBlock(rawData, 0, rawData.Length);
+
+                // 将 IV 和加密数据合并写入文件
+                byte[] result = new byte[aes.IV.Length + encryptedData.Length];
+                Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
+                Buffer.BlockCopy(encryptedData, 0, result, aes.IV.Length, encryptedData.Length);
+
+                File.WriteAllBytes(outputPath, result);
+            }
+        }
+    }
     [MenuItem("ABBuilder/Clear AB-Asset Connection")]
     public static void ClearConnection()
     {
@@ -39,7 +63,7 @@ public class ABBuildEditor : Editor
             AssetImporter importer = AssetImporter.GetAtPath(unityAssetPath);
             if (string.IsNullOrEmpty(importer.assetBundleName)) continue;
 
-            var bundleCfg = cfg.GetBundleConfig(importer.assetBundleName);
+            var bundleCfg = cfg.GetBundleData(importer.assetBundleName);
             if (bundleCfg != null)
             {
                 Debug.Log(di.FullName);
@@ -53,6 +77,56 @@ public class ABBuildEditor : Editor
             importer.assetBundleName = "";
         }
         Debug.Log($"Clear AB-Asset Connection Success at path [{cfg.ResPath}]");
+    }
+    [MenuItem("ABBuilder/Clear All AB-Asset Connection")]
+    public static void ClearAllConnection()
+    {
+        BuilderConfigScriptable cfg = GetBuilderConfig();
+        if (cfg == null)
+        {
+            Debug.LogError($"Config Not Exist");
+            return;
+        }
+        var di = new DirectoryInfo(Application.dataPath);
+        var fis = di.GetFiles("*", SearchOption.AllDirectories);
+        foreach (var file in fis)
+        {
+            if (file.Extension == ".meta" || file.Extension == ABBuildConfig.VARIANT_AB) continue;
+            if (cfg.ignoreFilePattern.Contains(file.Extension)) continue;
+
+            var assetPath = Path.Combine("Assets/", file.FullName.Replace(Application.dataPath, "")).Replace(@"\", "/");
+            // 将路径转换为Unity项目中的相对路径
+            string unityAssetPath = "Assets" + assetPath.Substring(Application.dataPath.Length);
+            var dirRoots = System.Linq.Enumerable.ToList(unityAssetPath.Split('/'));
+            if (!string.IsNullOrEmpty(dirRoots.Find((a) => { 
+                return a.EndsWith('~') || a == ".git";
+            }))) continue;
+
+            // 获取资产
+            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(unityAssetPath);
+            if (asset == null)
+            {
+                Debug.LogWarning("Failed to load asset at path: " + unityAssetPath);
+                return;
+            }
+
+            AssetImporter importer = AssetImporter.GetAtPath(unityAssetPath);
+            if (string.IsNullOrEmpty(importer.assetBundleName)) continue;
+
+            var bundleCfg = cfg.GetBundleData(importer.assetBundleName);
+            if (bundleCfg != null)
+            {
+                Debug.Log(di.FullName);
+                var abPath = bundleCfg.directories.Find((a) => { return a == di.FullName; });
+                if (!string.IsNullOrEmpty(abPath))
+                {
+                    bundleCfg.directories.Remove(abPath);
+                }
+            }
+
+            importer.assetBundleName = "";
+        }
+        Debug.Log($"Clear All AB-Asset Connection Success");
     }
 
     [MenuItem("ABBuilder/CreateConfig")]
@@ -82,14 +156,14 @@ public class ABBuildEditor : Editor
             return;
         }
         #region BindAB
-        var abVariant = AssetBundleManager.VARIANT_AB;
-        foreach (var bundleCfg in cfg.BundleConfigs)
+        var abVariant = ABBuildConfig.VARIANT_AB;
+        foreach (var bundleData in cfg.BundleDatas)
         {
-            foreach (var dir in bundleCfg.directories)
+            foreach (var dir in bundleData.directories)
             {
                 if (!Directory.Exists(dir))
                 {
-                    Debug.LogWarning($"NOT found path: [{dir}], assets bind to ab [{bundleCfg.bundleName}] FAILED");
+                    Debug.LogWarning($"NOT found path: [{dir}], assets bind to ab [{bundleData.bundleName}] FAILED");
                     continue;
                 }
                 DirectoryInfo dirInfo = new DirectoryInfo(dir);
@@ -119,6 +193,7 @@ public class ABBuildEditor : Editor
                 }
             }
         }
+
         Debug.Log($"Bind Finished");
         #endregion
 
@@ -134,14 +209,14 @@ public class ABBuildEditor : Editor
         #endregion
 
         #region Version File
-        var catalogPath = Path.Combine(cfg.FinalOutputPath + $"/{AssetBundleManager.VERSION_FILE_NAME}");
+        var catalogPath = Path.Combine(cfg.FinalOutputPath + $"/{ABBuildConfig.VERSION_FILE_NAME}");
         //if (File.Exists(catalogPath)) File.Delete(catalogPath);
         using (var fs = new FileStream(catalogPath, FileMode.OpenOrCreate))
         {
             int mainVersion = cfg.MainVersion, subVersion = cfg.SubVersion, resVersion = cfg.ResourceVersion;
 
-            string line1 = $"{mainVersion}{AssetBundleManager.catalogFileVersionSpliter}" +
-                $"{subVersion}{AssetBundleManager.catalogFileVersionSpliter}" +
+            string line1 = $"{mainVersion}{ABBuildConfig.VERSION_FILE_SPLITER}" +
+                $"{subVersion}{ABBuildConfig.VERSION_FILE_SPLITER}" +
                 $"{resVersion}\n";
 
             var bytes1 = System.Text.Encoding.UTF8.GetBytes(line1);
@@ -151,7 +226,8 @@ public class ABBuildEditor : Editor
         #endregion
 
         #region Hash File
-        var hashPath = Path.Combine(cfg.FinalOutputPath, AssetBundleManager.HASH_FILE_NAME);
+        var hashPath = Path.Combine(cfg.FinalOutputPath, ABBuildConfig.HASH_FILE_NAME);
+        List<string> BasicBundlePaths = new List<string>();
         using (var fsHash = new FileStream(hashPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
         {
             string abInfos = "";
@@ -161,13 +237,19 @@ public class ABBuildEditor : Editor
                 var abname = ab.Substring(0, ab.Length - abVariant.Length);
                 var abpath = Path.Combine(cfg.FinalOutputPath + $"/{ab}");
                 var size = File.ReadAllBytes(abpath).Length;
-                var md5 = Helpers.GetFileMD5(abpath);
+                var md5 = Helpers.ParseToMD5(abpath);
+                var data = cfg.GetBundleData(abname);
+                var loadType = data.bundleType;
+                var encrypt = data.encrypt;
+                if (loadType == ABType.Basic)
+                    BasicBundlePaths.Add(abpath);
 
-                var info = new ABHashInfo() { 
-                    abPath = abname, 
-                    size = size, 
-                    type = cfg.GetBundleConfig(abname).loadType, 
-                    hash = md5 
+                var info = new ABHashInfo() {
+                    abPath = abname,
+                    size = size,
+                    type = loadType,
+                    hash = md5,
+                    Encrypt = encrypt,
                 };
 
                 abInfos += ABHashInfo.ToString(info) + '\n';
@@ -177,6 +259,35 @@ public class ABBuildEditor : Editor
             fsHash.Write(bytes1, 0, bytes1.Length);
         }
         Debug.Log("hash file built successfully at: " + cfg.FinalOutputPath);
+        #endregion
+
+        #region HandleBasicBundles
+        if (!Directory.Exists(Application.streamingAssetsPath))
+            Directory.CreateDirectory(Application.streamingAssetsPath);
+        var appFilePath = Application.streamingAssetsPath + $"/{cfg.buildTargetPlatform}/";
+        if (File.Exists(catalogPath) && File.Exists(hashPath))
+        {
+            File.Copy(catalogPath, appFilePath + ABBuildConfig.VERSION_FILE_NAME, true);
+            File.Copy(hashPath, appFilePath + ABBuildConfig.HASH_FILE_NAME, true);
+        }
+        else Debug.LogError($"ver/hash NOT found :\nver: {catalogPath}\nhash: {hashPath}");
+        var mainABPath = Path.Combine(cfg.FinalOutputPath, cfg.buildTargetPlatform.ToString());
+        if (File.Exists(mainABPath))
+            File.Copy(mainABPath, appFilePath + cfg.buildTargetPlatform.ToString(), true);
+        else Debug.LogError($"main AssetBundle NOT found at path: {mainABPath}");
+        var basicBundlePath = Helpers.GetBasicBundlePath(cfg.buildTargetPlatform.ToString());
+        if (!Directory.Exists(basicBundlePath))
+            Directory.CreateDirectory(basicBundlePath);
+        foreach (var path in BasicBundlePaths)
+        {
+            if (File.Exists(path))
+            {
+                var arr = path.Replace(@"\", "/").Split('/');
+                var fileName = arr[arr.Length - 1];
+                var finalPath = basicBundlePath + fileName;
+                File.Copy(path, finalPath, true);
+            }
+        }
         #endregion
 
         #region Backup Config
@@ -221,7 +332,7 @@ public class ABBuildEditor : Editor
             Action<string> onOK = (inpABName) =>
             {
                 inpABName = inpABName.ToLower();
-                BuilderConfigScriptable.BundleConfig bundleConfig = null;
+                BundleData bdata = null;
                 List<string> dirs = new List<string>();
                 string errorLog = "";
 
@@ -229,32 +340,34 @@ public class ABBuildEditor : Editor
                 {
                     var dir = Application.dataPath + path.Substring(6, path.Length - 6);
                     dir = dir.Replace("/", @"\");
-                    foreach (var abcfg in cfg.BundleConfigs)
+                    foreach (var data in cfg.BundleDatas)
                     {
-                        if (abcfg.directories.Contains(dir))
+                        if (data.directories.Contains(dir))
                         {
-                            errorLog += $"Directory [{dir}] already added to assetbundle [{abcfg.bundleName}]";
+                            errorLog += $"Directory [{dir}] already added to assetbundle [{data.bundleName}]";
                             break;
                         }
                     }
                     dirs.Add(dir);
                 }
                 if (!string.IsNullOrEmpty(errorLog)) { Debug.LogError("Bind resources to AssetBundle FAILED:\n" + errorLog); return; }
-                var abCfg = cfg.GetBundleConfig(inpABName);
-                if (abCfg != null)
+                var bundleData = cfg.GetBundleData(inpABName);
+
+                if (bundleData != null)
                 {
-                    abCfg.directories.AddRange(dirs);
+                    bundleData.directories.AddRange(dirs);
                 }
                 else
                 {
-                    bundleConfig = new BuilderConfigScriptable.BundleConfig();
-                    bundleConfig.bundleName = inpABName;
-                    bundleConfig.loadType = BundleLoadType.OnStart;
-                    bundleConfig.directories = dirs;
+                    bdata = new BundleData();
+                    bdata.bundleName = inpABName;
+                    bdata.bundleType = ABType.Hotfix;
+                    bdata.directories = dirs;
+                    bdata.encrypt = 0;
                 }
-                if (bundleConfig != null)
+                if (bdata != null)
                 {
-                    cfg.BundleConfigs.Add(bundleConfig);
+                    cfg.BundleDatas.Add(bdata);
                 }
 
                 BuilderConfigScriptable.Save(cfg);
@@ -311,7 +424,7 @@ public class ABBuildEditor : Editor
 
                 if (string.IsNullOrEmpty(importer.assetBundleName)) continue;
 
-                var bundleCfg = cfg.GetBundleConfig(importer.assetBundleName);
+                var bundleCfg = cfg.GetBundleData(importer.assetBundleName);
                 if (bundleCfg != null)
                 {
                     var abPath = bundleCfg.directories.Find((a) => { return a == di.FullName; });
@@ -427,11 +540,11 @@ public class ABBuildEditor : Editor
 
         #region Version & Hash Files
 
-        var verPath = Path.Combine(cfg.FinalOutputPath, AssetBundleManager.VERSION_FILE_NAME);
+        var verPath = Path.Combine(cfg.FinalOutputPath, ABBuildConfig.VERSION_FILE_NAME);
         using (var fs = new FileStream(verPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
         {
-            string content = $"{cfg.MainVersion}{AssetBundleManager.catalogFileVersionSpliter}" +
-                $"{cfg.SubVersion}{AssetBundleManager.catalogFileVersionSpliter}" +
+            string content = $"{cfg.MainVersion}{ABBuildConfig.VERSION_FILE_SPLITER}" +
+                $"{cfg.SubVersion}{ABBuildConfig.VERSION_FILE_SPLITER}" +
                 $"{cfg.ResourceVersion}";
             var bytes = System.Text.Encoding.UTF8.GetBytes(content);
             fs.Write(bytes, 0, bytes.Length);
@@ -458,7 +571,6 @@ public class ABBuildEditor : Editor
         //}
         #endregion
     }
-
 
     // 根据文件路径获取资产包名
     static string GetBundleName(string filePath)

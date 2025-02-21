@@ -33,4 +33,14 @@ MonoBehaviour:
     directories:
     - Assets/LuaScripts
     bundleType: 1
-    encrypt: 0
+    encrypt: 1
+  - bundleName: cs_dlls
+    directories:
+    - Assets/Res/DLLs
+    bundleType: 0
+    encrypt: 1
+  - bundleName: hotfix_common
+    directories:
+    - Assets/Res/Hotfix/Common
+    bundleType: 1
+    encrypt: 1

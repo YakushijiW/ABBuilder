@@ -4,34 +4,9 @@ using UnityEngine;
 using System.IO;
 using System;
 using UnityEditor;
-using System.Security.Cryptography;
 
 public class ABBuildEditor : Editor
 {
-    public static void EncryptAssetBundle(string inputPath, string outputPath, byte[] key)
-    {
-        // 读取原始 AssetBundle 数据
-        byte[] rawData = File.ReadAllBytes(inputPath);
-
-        // 使用 AES 加密（示例）
-        using (Aes aes = Aes.Create())
-        {
-            aes.Key = key;
-            aes.GenerateIV(); // 生成随机 IV
-
-            using (ICryptoTransform encryptor = aes.CreateEncryptor())
-            {
-                byte[] encryptedData = encryptor.TransformFinalBlock(rawData, 0, rawData.Length);
-
-                // 将 IV 和加密数据合并写入文件
-                byte[] result = new byte[aes.IV.Length + encryptedData.Length];
-                Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
-                Buffer.BlockCopy(encryptedData, 0, result, aes.IV.Length, encryptedData.Length);
-
-                File.WriteAllBytes(outputPath, result);
-            }
-        }
-    }
     [MenuItem("ABBuilder/Clear AB-Asset Connection")]
     public static void ClearConnection()
     {
@@ -204,7 +179,7 @@ public class ABBuildEditor : Editor
         var abm = BuildPipeline.BuildAssetBundles(cfg.FinalOutputPath, cfg.GetCompressType(), cfg.buildTargetPlatform);
         AssetDatabase.SaveAssets();
         // Refresh the Asset Database
-        AssetDatabase.Refresh();
+        //AssetDatabase.Refresh();
         Debug.Log("AssetBundles built successfully at: " + cfg.FinalOutputPath);
         #endregion
 
@@ -264,28 +239,35 @@ public class ABBuildEditor : Editor
         #region HandleBasicBundles
         if (!Directory.Exists(Application.streamingAssetsPath))
             Directory.CreateDirectory(Application.streamingAssetsPath);
-        var appFilePath = Application.streamingAssetsPath + $"/{cfg.buildTargetPlatform}/";
+        var appFilePath = ABBuildConfig.AppABDirectory;
+        if (!Directory.Exists(appFilePath))
+            Directory.CreateDirectory(appFilePath);
         if (File.Exists(catalogPath) && File.Exists(hashPath))
         {
-            File.Copy(catalogPath, appFilePath + ABBuildConfig.VERSION_FILE_NAME, true);
-            File.Copy(hashPath, appFilePath + ABBuildConfig.HASH_FILE_NAME, true);
+            File.Copy(catalogPath, appFilePath + '/' + ABBuildConfig.VERSION_FILE_NAME, true);
+            File.Copy(hashPath, appFilePath + '/' +ABBuildConfig.HASH_FILE_NAME, true);
         }
         else Debug.LogError($"ver/hash NOT found :\nver: {catalogPath}\nhash: {hashPath}");
         var mainABPath = Path.Combine(cfg.FinalOutputPath, cfg.buildTargetPlatform.ToString());
         if (File.Exists(mainABPath))
-            File.Copy(mainABPath, appFilePath + cfg.buildTargetPlatform.ToString(), true);
+        {
+            File.Copy(mainABPath, appFilePath + '/' + cfg.buildTargetPlatform.ToString(), true);
+            File.Copy(mainABPath + ".manifest", appFilePath + '/' + cfg.buildTargetPlatform.ToString()+".manifest", true);
+        }
         else Debug.LogError($"main AssetBundle NOT found at path: {mainABPath}");
-        var basicBundlePath = Helpers.GetBasicBundlePath(cfg.buildTargetPlatform.ToString());
-        if (!Directory.Exists(basicBundlePath))
-            Directory.CreateDirectory(basicBundlePath);
         foreach (var path in BasicBundlePaths)
         {
             if (File.Exists(path))
             {
                 var arr = path.Replace(@"\", "/").Split('/');
                 var fileName = arr[arr.Length - 1];
-                var finalPath = basicBundlePath + fileName;
+                var finalPath = appFilePath + '/' + fileName;
                 File.Copy(path, finalPath, true);
+                File.Copy(path+".manifest", finalPath+".manifest", true);
+                File.Delete(path);
+                File.Delete(path + ".meta");
+                File.Delete(path + ".manifest");
+                File.Delete(path + ".manifest.meta");
             }
         }
         #endregion
@@ -455,12 +437,136 @@ public class ABBuildEditor : Editor
         }
     }
 
+    // // HybridClr和XLua方案无法完美兼容，XLua有大量internal方法(AOT)，gen的cs代码(Hotfix)无法访问。
+    // // 除非确保打包出去的LuaCallCSharp部分不会被HybridClr更新，全部置于AOT中。
+    [MenuItem("ABBuilder/Tools/Cut Paste XLua Gen")]
+    public static void CutPasteXLuaGen()
+    {
+        // 源文件夹路径
+        string sourceDirectory = @"E:\UnityProjects\my_xlua_framework\Assets\XLua\Gen";
+
+        // 目标文件夹路径
+        string targetDirectory = @"E:\UnityProjects\my_xlua_framework\Assets\Scripts\AOT\XLua\Gen";
+
+        // 空文件夹或不存在则不处理
+        if (Directory.Exists(sourceDirectory))
+        {
+            var dir = new DirectoryInfo(sourceDirectory);
+            if (dir.GetFiles("*", SearchOption.AllDirectories).Length == 0)
+                return;
+        }
+        else { Debug.LogWarning($"source dir NOT exist: {sourceDirectory}"); return; }
+
+        // 调用剪切文件夹的方法
+        CutAndPaste(sourceDirectory, targetDirectory, true);
+    }
+    static void CutAndPaste(string sourceDirectory, string targetDirectory, bool deleteSourceDir = true)
+    {
+        try
+        {
+            if (deleteSourceDir)
+            {
+                // 确保目标文件夹不存在
+                if (Directory.Exists(targetDirectory))
+                {
+                    Directory.Delete(targetDirectory, true);
+                }
+
+                // 移动文件夹
+                Directory.Move(sourceDirectory, targetDirectory);
+                Debug.Log($"文件夹已成功移动到：{targetDirectory}");
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+                return;
+            }
+
+            // 确保目标文件夹存在
+            if (!Directory.Exists(targetDirectory))
+            {
+                Directory.CreateDirectory(targetDirectory);
+            }
+
+            // 复制所有文件
+            foreach (var file in Directory.GetFiles(sourceDirectory))
+            {
+                string destFile = Path.Combine(targetDirectory, Path.GetFileName(file));
+                File.Copy(file, destFile, true);  // 如果目标文件已存在，覆盖它
+            }
+
+            // 复制所有子文件夹
+            foreach (var subDir in Directory.GetDirectories(sourceDirectory))
+            {
+                string destSubDir = Path.Combine(targetDirectory, Path.GetFileName(subDir));
+                Directory.CreateDirectory(destSubDir);
+                // 递归复制子文件夹中的内容
+                CopyDirectory(subDir, destSubDir);
+            }
+
+            // 删除源文件夹
+            Directory.Delete(sourceDirectory, true);  // 第二个参数为true表示删除文件夹及其内容
+
+            Debug.Log($"文件夹已成功移动到：{targetDirectory}");
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"发生错误：{ex.Message}");
+        }
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+    }
+    static void CopyDirectory(string sourceDir, string targetDir)
+    {
+        // 复制文件
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            string destFile = Path.Combine(targetDir, Path.GetFileName(file));
+            File.Copy(file, destFile, true);  // 如果目标文件已存在，覆盖它
+        }
+
+        // 递归复制子文件夹
+        foreach (var subDir in Directory.GetDirectories(sourceDir))
+        {
+            string destSubDir = Path.Combine(targetDir, Path.GetFileName(subDir));
+            Directory.CreateDirectory(destSubDir);
+            CopyDirectory(subDir, destSubDir);  // 递归复制
+        }
+    }
+
+    [MenuItem("ABBuilder/Tools/Copy HybridClr Gen to .bytes")]
+    public static void CopyHybridGensToBytes()
+    {
+        string sourceDir = @"E:\UnityProjects\my_xlua_framework\HybridCLRData\HotUpdateDlls\StandaloneWindows64";
+        string targetDir = @"E:\UnityProjects\my_xlua_framework\Assets\Res\DLLs";
+        List<string> ignore = new List<string>
+        {
+
+        };
+        string postfix = "*.dll";
+        string pattern = $"*{postfix}";
+        string addPostfix = ".bytes";
+
+        if (!Directory.Exists(sourceDir)) { Debug.Log($"source path NOT exists: [{sourceDir}]"); return; }
+        if (Directory.Exists(targetDir))
+            Directory.Delete(targetDir, true);
+        Directory.CreateDirectory(targetDir);
+        var dirInfo = new DirectoryInfo(sourceDir);
+        var files = dirInfo.GetFiles(pattern, SearchOption.AllDirectories);
+        string log = $"Start Copy DLL Files:\n";
+        foreach (var file in files)
+        {
+            if (ignore.Contains(file.Name)) continue;
+            var tarFinalPath = targetDir + '\\' + file.Name + addPostfix;
+            File.Copy(file.FullName, tarFinalPath);
+            log += $"[{file.Name}] Copied to path [{tarFinalPath}]\n";
+        }
+        Debug.Log($"{log}");
+        AssetDatabase.Refresh();
+    }
     //[MenuItem("ABBuilder/Test")]
     public static void Test()
     {
 
     }
-
     // 未完成功能
     //[MenuItem("ABBuilder/OneKeyBuildSeparately")]
     public static void OneKeyBuildSeparately()

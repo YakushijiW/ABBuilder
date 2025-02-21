@@ -35,11 +35,6 @@ public class Helpers
         return str;
     }
 
-    public static string GetBasicBundlePath(string platform)
-    {
-        return Application.streamingAssetsPath + $"/{platform}/Basic/";
-    }
-
     // 加密函数
     public static string Encrypt(string plainText)
     {

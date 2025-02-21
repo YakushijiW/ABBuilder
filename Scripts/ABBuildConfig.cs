@@ -7,7 +7,13 @@ using UnityEngine;
 /// </summary>
 public enum ABType
 {
+    /// <summary>
+    /// 打包在AppPath目录，无法被热更新。
+    /// </summary>
     Basic,
+    /// <summary>
+    /// 从服务器下载，保存在LocalPath。
+    /// </summary>
     Hotfix,
     // 以下为扩展功能
     /// <summary>
@@ -15,7 +21,7 @@ public enum ABType
     /// </summary>
     HotfixRestart,
     /// <summary>
-    /// 在完成热更新流程后，若部分模块并非玩家能够第一时间接触到，可以被归为该类，在热更新流程中不被下载，减少进入游戏前的下载所需时间（基本仅用于游戏开服阶段，建议后续改为Hotfix）
+    /// 在热更新流程中不被下载。在完成热更新流程后，若部分模块并非玩家能够第一时间接触到，被归为该类可以减少进入游戏前的下载所需时间
     /// </summary>
     Extra,
 }

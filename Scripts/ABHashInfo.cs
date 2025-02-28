@@ -4,19 +4,22 @@
 public class ABHashInfo
 {
     public const char SPLITER = ',';
-    public string abPath;
+    public string abName;
     public string hash;
     public long size;
     public ABType type;
     public uint Encrypt;
     public bool IsEncrypted { get { return Encrypt > 0; } }
 
-    public string ABFileName { 
-        get {
-            if (string.IsNullOrEmpty(abPath)) return null;
-            var dirs = abPath.Split('/');
-            return dirs[dirs.Length - 1];
-        }  
+    public string ABFileName
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(abName)) return null;
+            if (IsEncrypted)
+                return abName + ABBuildConfig.VARIANT_AB_ENCRYPT;
+            return abName + ABBuildConfig.VARIANT_AB;
+        }
     }
     public static ABHashInfo Parse(string line)
     {
@@ -27,7 +30,7 @@ public class ABHashInfo
         {
             try
             {
-                info.abPath = parts[0];
+                info.abName = parts[0];
                 info.size = long.Parse(parts[1]);
                 info.type = (ABType)int.Parse(parts[2]);
                 info.hash = parts[3];
@@ -45,7 +48,7 @@ public class ABHashInfo
     public static string ToString(ABHashInfo info)
     {
         if (info == null) return null;
-        return info.abPath + SPLITER + 
+        return info.abName + SPLITER + 
             info.size + SPLITER + 
             (int)info.type + SPLITER + 
             info.hash + SPLITER +

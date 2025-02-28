@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   ResPath: E:\UnityProjects\my_xlua_framework\Assets\Res
   OutputPath: E:\UnityProjects\my_xlua_framework\Assets\AssetBundles
-  buildTargetPlatform: 19
+  buildTargetPlatform: 13
   compressType: 1
   MainVersion: 1
   SubVersion: 1
@@ -23,24 +23,85 @@ MonoBehaviour:
   ignoreFilePattern:
   - .gitkeep
   - .gitignore
+  ignoreDirectory:
+  - E:\UnityProjects\my_xlua_framework\Assets\LuaScripts\.vscode
   BundleDatas:
-  - bundleName: basic_bundle
+  - bundleName: basic1
     directories:
     - Assets/Res/Basic
+    - Assets/Res/BG
     bundleType: 0
+    packTogether: 1
     encrypt: 0
   - bundleName: lua_scripts
     directories:
     - Assets/LuaScripts
     bundleType: 1
+    packTogether: 1
     encrypt: 1
   - bundleName: cs_dlls
     directories:
     - Assets/Res/DLLs
     bundleType: 0
+    packTogether: 1
     encrypt: 1
   - bundleName: hotfix_common
     directories:
     - Assets/Res/Hotfix/Common
     bundleType: 1
+    packTogether: 1
     encrypt: 1
+  - bundleName: test_depend1
+    directories:
+    - Assets/Res/Test/bundle1
+    bundleType: 1
+    packTogether: 1
+    encrypt: 0
+  - bundleName: test_depend2
+    directories:
+    - Assets/Res/Test/bundle2
+    bundleType: 1
+    packTogether: 1
+    encrypt: 0
+  - bundleName: test_depend3
+    directories:
+    - Assets/Res/Test/bundle3
+    bundleType: 1
+    packTogether: 1
+    encrypt: 0
+  - bundleName: test_depend1_scene
+    directories:
+    - Assets/Res/Test/scene_bundle1
+    bundleType: 1
+    packTogether: 1
+    encrypt: 0
+  - bundleName: test_depend2_scene
+    directories:
+    - Assets/Res/Test/scene_bundle2
+    bundleType: 1
+    packTogether: 1
+    encrypt: 0
+  - bundleName: basic2
+    directories:
+    - Assets/Res/Basic2
+    bundleType: 0
+    packTogether: 1
+    encrypt: 0
+  - bundleName: loadingbg
+    directories:
+    - Assets/Res/LoadingBG
+    bundleType: 0
+    packTogether: 1
+    encrypt: 0
+  - bundleName: updatebg
+    directories:
+    - Assets/Res/UpdateBG
+    bundleType: 0
+    packTogether: 1
+    encrypt: 0
+  - bundleName: test_seperate
+    directories:
+    - Assets/Res/SquareIcon/Sprite
+    bundleType: 1
+    packTogether: 0
+    encrypt: 0

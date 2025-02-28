@@ -32,6 +32,7 @@ public class BuilderConfigScriptable : ScriptableObject
     public bool SaveBackupOnBuild = true;
     [Space]
     public List<string> ignoreFilePattern = new List<string>();
+    public List<string> ignoreDirectory = new List<string>();
     [Space]
     public List<BundleData> BundleDatas = new();
     public void SetDefault()
@@ -116,7 +117,12 @@ public class BuilderConfigScriptable : ScriptableObject
         {
             var d = bnd.directories.Find((dir) =>
             {
-                return fileName.Contains(dir.Replace('/', '\\'));
+                FileInfo fi = new FileInfo(fileName);
+                DirectoryInfo di = fi.Directory;
+                var rootDir = dir.Replace(@"\","/").Split('/')[^1];
+                while (di != null && di.Name != rootDir)
+                    di = di.Parent;
+                return di != null;
             });
             return d != null;
         });

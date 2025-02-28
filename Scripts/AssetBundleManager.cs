@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine.Networking;
 using UnityEngine.SceneManagement;
-using XLua;
 
 public class AssetBundleManager : MonoBehaviour
 {
@@ -41,9 +40,10 @@ public class AssetBundleManager : MonoBehaviour
     public string tempDownloadDirectory { get { return Path.Combine(Application.persistentDataPath + $"/temp"); } }
     public string ABDirectoryName { get { return ABBuildConfig.ABDirectoryName; } }
 
-    AssetBundle mainAB;
-    AssetBundleManifest manifest;
-    AssetBundleCatalog Catalog;
+    AssetBundleManifest manifestLocal;
+    AssetBundleCatalog catalogLocal;
+    AssetBundleManifest manifestApp;
+    AssetBundleCatalog catalogApp;
 
     private static AssetBundleManager instance;
 
@@ -88,102 +88,26 @@ public class AssetBundleManager : MonoBehaviour
     }
 
     #region InnerFunctions
-    IEnumerator CoLoadAssetBundleRef(string bundleName, System.Action<AssetBundleRef> callback)
+    AssetBundle LoadEncryptedAssetBundle(string path)
     {
-        loadedAssetBundles.TryGetValue(bundleName, out var abr);
-        if (abr != null)
-        {
-            callback?.Invoke(abr);
-            yield break;
-        }
-        dicABDependencies.TryGetValue(bundleName, out var dependencies);
-        int dependencyCount = 0;
-        List<AssetBundleRef> dependenciesList = new List<AssetBundleRef>();
-        if (dependencies != null)
-        {
-            dependencyCount = dependencies.Count;
-            foreach (var dependency in dependencies)
-            {
-                StartCoroutine(CoLoadAssetBundleRef(dependency, (ab) => { dependenciesList.Add(ab); }));
-            }
-        }
+        // 读取加密文件
+        byte[] encryptedData = File.ReadAllBytes(path);
 
-        while (dependenciesList.Count < dependencyCount)
-            yield return null;
-
-        if (loadingAssetBundles.ContainsKey(bundleName))
-        {
-            loadingAssetBundles[bundleName] += callback;
-            yield break;
-        }
-
-        string path = Path.Combine(localABDirectory, bundleName + variantAB);
-        dicABHashInfo.TryGetValue(bundleName, out var hashInfo);
-        if (hashInfo == null) { callback?.Invoke(null); yield break; }
-        System.Action<AssetBundle> onGet = (ab) =>
-        {
-            if (ab != null)
-            {
-                AssetBundle bundle = ab;
-                var loaded = new AssetBundleRef(bundle)
-                {
-                    dependencies = dependenciesList
-                };
-                loadedAssetBundles[bundleName] = loaded;
-                callback?.Invoke(loaded);
-                loadingAssetBundles[bundleName]?.Invoke(loaded);
-            }
-            else
-            {
-                callback?.Invoke(null);
-                loadingAssetBundles[bundleName]?.Invoke(null);
-                Debug.LogError("Failed to load AssetBundle at path: " + path);
-            }
-        };
-        if (hashInfo.IsEncrypted)
-        {
-            var op = CoLoadEncryptedAssetBundle(path, onGet);
-            yield return op;
-            yield break;
-        }
-        AssetBundleCreateRequest request = AssetBundle.LoadFromFileAsync(path);
-        loadingAssetBundles.Add(bundleName, null);
-
-        yield return request;
-        var ab = request.assetBundle;
-        onGet(ab);
-        loadingAssetBundles.Remove(bundleName);
+        var data = Helpers.DecryptAES(encryptedData, ABBuildConfig.BundleEncryptKey, ABBuildConfig.BundleEncryptIV);
+        var ab = AssetBundle.LoadFromMemory(data);
+        return ab;
     }
-    IEnumerator CoLoadScene(string sceneName, LoadSceneMode mode = LoadSceneMode.Single, System.Action<string> onLoaded = null, System.Action<float> progress = null)
+    IEnumerator CoLoadEncryptedAssetBundle(string path, System.Action<AssetBundle> cb)
     {
-        int disableProgress = 0;
-        var op = SceneManager.LoadSceneAsync(sceneName, mode);
-        op.allowSceneActivation = false;
-        int toProgress;
-        //op.progress 只能获取到90%，最后10%获取不到，需要自己处理
-        while (op.progress < 0.9f)
-        {
-            ////获取真实的加载进度
-            //toProgress = (int)(op.progress * 100);
-            //while (disableProgress < toProgress)
-            //{
-            //    ++disableProgress;
-            //    progress?.Invoke(disableProgress / 100.0f);//0.01开始
-            //    yield return new WaitForEndOfFrame();
-            //}
-            progress?.Invoke(op.progress / 100.0f);
-            yield return null;
-        }
-        //因为op.progress 只能获取到90%，所以后面的值不是实际的场景加载值了
-        toProgress = 100;
-        while (disableProgress < toProgress)
-        {
-            ++disableProgress;
-            progress?.Invoke(disableProgress / 100.0f);
-            yield return new WaitForEndOfFrame();
-        }
-        op.allowSceneActivation = true;
-        onLoaded?.Invoke("");
+        // 读取加密文件
+        var opRead = File.ReadAllBytesAsync(path);
+        yield return opRead;
+        byte[] encryptedAB = opRead.Result;
+
+        var data = Helpers.DecryptAES(encryptedAB, ABBuildConfig.BundleEncryptKey, ABBuildConfig.BundleEncryptIV);
+        var opAB = AssetBundle.LoadFromMemoryAsync(data);
+        yield return opAB;
+        cb?.Invoke(opAB.assetBundle);
     }
     IEnumerator CoLoadAsset<T>(AssetBundleRef abr, string assetName, System.Action<T> onGet) where T : Object
     {
@@ -197,98 +121,73 @@ public class AssetBundleManager : MonoBehaviour
         yield return abReq;
         onGet?.Invoke(abReq.asset);
     }
-    IEnumerator CoHandleAssetBundleManifest(AssetBundleManifest manifest, bool isSimpleAssetName = false)
+    IEnumerator CoHandleAssetBundleManifest(bool isLocal = false)
     {
-        foreach (var abFile in manifest.GetAllAssetBundles())
+        var Catalog = isLocal ? catalogLocal : catalogApp;
+        var manifest = isLocal ? manifestLocal : manifestApp;
+        var handleBundles = System.Linq.Enumerable.ToList(Catalog.bundles.Values).FindAll((a) =>
         {
-            var abName = abFile.Substring(0, abFile.Length - variantAB.Length);
-            Catalog.bundles.TryGetValue(abName, out var abCatalogInfo);
-            if (abCatalogInfo == null) continue;
-            dicABHashInfo[abName] = abCatalogInfo;
-            if (abCatalogInfo.type == ABType.Basic) continue;
+            return true;//(isLocal ? (a.type == ABType.Basic || a.type == ABType.BasicAndHotfix) : true);
+        });
+        foreach (var abInfo in handleBundles)
+        {
+            var abFileName = abInfo.ABFileName;
+            string abName = abInfo.abName;
+            dicABHashInfo[abName] = abInfo;
             
-            var abPath = Path.Combine(localABDirectory + "/" + abFile);
-            if (!File.Exists(abPath)) continue;
-            // if (!APP_AB_NAMES.Contains(abName)) { continue; }
+            var abPath = Path.Combine((isLocal ? localABDirectory : appABDirectory) + "/" + abFileName);
+            if (!File.Exists(abPath)) { Debug.LogWarning($"Not found ab[{(isLocal ? "local":"app")}]: {abName}"); continue; }
 
             var depedencies = new List<string>();
-            foreach (var dp in manifest.GetAllDependencies(abFile))
-                depedencies.Add(dp.Substring(0, dp.Length - variantAB.Length));
+            foreach (var dp in manifest.GetAllDependencies(abInfo.ABFileName))
+                depedencies.Add(dp.Replace(ABBuildConfig.VARIANT_AB, ""));
             dicABDependencies[abName] = depedencies;
 
+            // 颗粒化的AssetBundle直接标注Asset名称(不包括文件后缀名)，不使用load加载
+            // 例如：var asset = ab.LoadAllAssets()[0];
+            // 注意：场景AssetBundle不要使用颗粒化打包
+            if (abName.Contains('/'))
+            {
+                dicAssetABName[abName] = abName;
+                Debug.Log($"AB[{abName}] assetName[{abName}]");
+                continue;
+            }
 
-            var abReq = AssetBundle.LoadFromFileAsync(abPath);
-            yield return abReq;
-            var ab = abReq.assetBundle;
+            AssetBundle ab = null;
+            if (abInfo.IsEncrypted)
+            {
+                yield return CoLoadEncryptedAssetBundle(abPath, a => ab = a);
+            }
+            else
+            {
+                var abReq = AssetBundle.LoadFromFileAsync(abPath);
+                yield return abReq;
+                ab = abReq.assetBundle;
+            }
             if (ab == null) { Debug.Log($"AssetBundle LoadFromFile [{abPath}] Null"); continue; }
 
-            foreach (var assetName in ab.GetAllAssetNames())
-            {
-                var dirs = assetName.Split('/');
-                var assetFile = dirs[dirs.Length - 1];
-                var parts = assetFile.Split('.');
-                // Tips: 使用SimpleAssetName时，确保所有资源中没有重复的文件名
-                string finalAssetName = isSimpleAssetName ? parts[0] : assetName;
-                dicAssetABName[finalAssetName] = abName;
-                Debug.Log($"AB[{abName}] assetName[{finalAssetName}]");
-            }
+            HandleAssetABName(ab, abName);
             // asset and scene cannot be packed in same assetbundle
-            var scenePaths = ab.GetAllScenePaths();
-            foreach (var scene in scenePaths)
-            {
-                var dirs = scene.Split('/');
-                var fileName = dirs[dirs.Length - 1];
-                var sceneName = isSimpleAssetName ? fileName.Substring(0, fileName.Length - 6) : scene; // ".unity".Length
-                dicSceneAssetBundle[sceneName] = abName;
-            }
+            HandleSceneABName(ab, abName);
             ab.Unload(false);
         }
     }
-    void HandleAssetBundleManifest(AssetBundleManifest manifest, bool isSimpleAssetName = false)
+    void HandleAssetABName(AssetBundle ab, string abName)
     {
-        foreach (var abFile in manifest.GetAllAssetBundles())
+        foreach (var assetName in ab.GetAllAssetNames())
         {
-            var abName = abFile.Substring(0, abFile.Length - variantAB.Length);
-            Catalog.bundles.TryGetValue(abName, out var abCatalogInfo);
-            if (abCatalogInfo == null) continue;
-            dicABHashInfo[abName] = abCatalogInfo;
-            if (abCatalogInfo.type == ABType.Basic) continue;
-
-            var abPath = Path.Combine(localABDirectory + "/" + abFile);
-            if (!File.Exists(abPath)) continue;
-            // if (!APP_AB_NAMES.Contains(abName)) { continue; } 
-
-            var depedencies = new List<string>();
-            foreach (var dp in manifest.GetAllDependencies(abFile))
-                depedencies.Add(dp.Substring(0, dp.Length - variantAB.Length));
-            dicABDependencies[abName] = depedencies;
-
-
-            var ab = AssetBundle.LoadFromFile(abPath);
-            if (ab == null) { Debug.Log($"AssetBundle LoadFromFile [{abPath}] Null"); continue; }
-
-            foreach (var assetName in ab.GetAllAssetNames())
-            {
-                var dirs = assetName.Split('/');
-                var assetFile = dirs[dirs.Length - 1];
-                var parts = assetFile.Split('.');
-                // Tips: 使用SimpleAssetName时，确保所有资源中没有重复的文件名
-                string finalAssetName = isSimpleAssetName ? parts[0] : assetName;
-                dicAssetABName[finalAssetName] = abName;
-                Debug.Log($"AB[{abName}] assetName[{finalAssetName}]");
-            }
-            // asset and scene cannot be packed in same assetbundle
-            var scenePaths = ab.GetAllScenePaths();
-            foreach (var scene in scenePaths)
-            {
-                var dirs = scene.Split('/');
-                var fileName = dirs[dirs.Length - 1];
-                var sceneName = isSimpleAssetName ? fileName.Substring(0, fileName.Length - 6) : scene; // ".unity".Length
-                dicSceneAssetBundle[sceneName] = abName;
-            }
-            ab.Unload(false);
+            dicAssetABName[assetName] = abName;
+            Debug.Log($"AB[{abName}] assetName[{assetName}]");
         }
-
+    }
+    void HandleSceneABName(AssetBundle ab, string abName)
+    {
+        var scenePaths = ab.GetAllScenePaths();
+        foreach (var scene in scenePaths)
+        {
+            dicSceneAssetBundle[scene] = abName;
+            Debug.Log($"AB[{scene}] assetName[{abName}]");
+        }
     }
     long GetLocalABSize(string abName)
     {
@@ -313,9 +212,9 @@ public class AssetBundleManager : MonoBehaviour
     #endregion
 
     #region Public functions
-    public bool GetABNameByAssetName(string assetName, out string bundleName)
+    public bool GetABNameByAssetName(ref string assetName, out string bundleName)
     {
-        bool res = dicAssetABName.TryGetValue(assetName, out var bName);
+        bool res = dicAssetABName.TryGetValue(assetName.ToLower(), out var bName);
         bundleName = bName;
         return res;
     }
@@ -323,38 +222,60 @@ public class AssetBundleManager : MonoBehaviour
     {
         return System.Linq.Enumerable.ToList(loadedAssetBundles.Values);
     }
-    public bool UnloadAssetBundle(string assetbundleName, bool unloadObject = false)
+    public bool UnloadAssetBundle(string abName, bool unloadAsset = false)
     {
-        if (loadedAssetBundles.TryGetValue(assetbundleName, out var abref))
+        if (!abName.EndsWith(variantAB)) { abName += variantAB; }
+        if (loadedAssetBundles.TryGetValue(abName, out var abref))
         {
-            abref.bundle.Unload(unloadObject);
+            if (abref.type == ABType.Basic) return false;
+            abref.bundle.Unload(unloadAsset);
+            foreach (var r in abref.dependencies)
+            {
+                r.touchCount--;
+                if (r.touchCount == 0)
+                    UnloadAssetBundle(r.bundle.name, unloadAsset); // 待测试
+            }
+            loadedAssetBundles.Remove(abName);
             return true;
         }
         return false;
     }
-    public void UnloadAssetBundleAsync(string assetbundleName, System.Action<bool> callback = null, bool unloadObject = false)
+    public void UnloadAssetBundleAsync(string abName, bool unloadAsset = false, System.Action<string, bool> callback = null)
     {
-        if (loadedAssetBundles.TryGetValue(assetbundleName, out var abref))
+        if (!abName.EndsWith(variantAB)) { abName += variantAB; }
+        if (loadedAssetBundles.TryGetValue(abName, out var abref))
         {
-            var op = abref.bundle.UnloadAsync(unloadObject);
-            op.completed += (a) =>
+            abref.bundle.UnloadAsync(unloadAsset).completed += (op) =>
             {
-                loadedAssetBundles.Remove(assetbundleName);
-                callback?.Invoke(true);
+                foreach (var r in abref.dependencies)
+                {
+                    r.touchCount--;
+                    if (r.touchCount == 0)
+                        UnloadAssetBundleAsync(r.bundle.name, unloadAsset, callback); // 待测试
+                }
+                loadedAssetBundles.Remove(abName);
+                callback?.Invoke(abName, true);
             };
         }
-        else callback?.Invoke(false);
+        else callback?.Invoke(abName, false);
     }
-    public IEnumerator CoUnloadAllAssetBundle(string assetbundleName, System.Action<bool> callback = null, bool unloadObject = false)
+    public IEnumerator CoUnloadAssetBundle(string abName, bool unloadAsset = false, System.Action<string, bool> callback = null)
     {
-        if (loadedAssetBundles.TryGetValue(assetbundleName, out var abref))
+        if (!abName.EndsWith(variantAB)) { abName += variantAB; }
+        if (loadedAssetBundles.TryGetValue(abName, out var abref))
         {
-            var op = abref.bundle.UnloadAsync(unloadObject);
+            var op = abref.bundle.UnloadAsync(unloadAsset);
             yield return op;
-            loadedAssetBundles.Remove(assetbundleName);
-            callback?.Invoke(true);
+            foreach (var r in abref.dependencies)
+            {
+                r.touchCount--;
+                if (r.touchCount == 0)
+                    UnloadAssetBundleAsync(r.bundle.name, unloadAsset, callback); // 待测试
+            }
+            loadedAssetBundles.Remove(abName);
+            callback?.Invoke(abName, true);
         }
-        else callback?.Invoke(false);
+        else callback?.Invoke(abName, false);
     }
     public void UnloadAllAssetBundles()
     {
@@ -388,10 +309,9 @@ public class AssetBundleManager : MonoBehaviour
     }
     public string GetStrVersion()
     {
-        if (Catalog == null) { return "内测版本"; }
-        return $"{Catalog.MainVersion}.{Catalog.SubVersion}.{Catalog.ResVersion}";
+        if (catalogLocal == null) { return "内测版本"; }
+        return $"{catalogLocal.MainVersion}.{catalogLocal.SubVersion}.{catalogLocal.ResVersion}";
     }
-
     #endregion
 
     #region Developing functions
@@ -446,7 +366,7 @@ public class AssetBundleManager : MonoBehaviour
         return true;
 #else
         // etc platforms
-        return true
+        return true;
 #endif
     }
 
@@ -536,61 +456,60 @@ public class AssetBundleManager : MonoBehaviour
     #region Resource Update pipeline
     public IEnumerator CoInit()
     {
+        yield return CoInitCatalog(false);
+        yield return CoInitCatalog(true);
+    }
+    public IEnumerator CoInitCatalog(bool isLocal)
+    {
+        var verFilePath = isLocal ? ABBuildConfig.LocalVerFilePath : ABBuildConfig.AppVerFilePath;
+        var hashFilePath = isLocal ? ABBuildConfig.LocalHashFilePath : ABBuildConfig.AppHashFilePath;
         string ver, hash;
-        bool initLocal = false;
-        var localVerFilePath = ABBuildConfig.LocalVerFilePath;
-        var localHashFilePath = ABBuildConfig.LocalHashFilePath;
-        var appVerFilePath = ABBuildConfig.AppVerFilePath;
-        var appHashFilePath = ABBuildConfig.AppHashFilePath;
-        if (File.Exists(localVerFilePath) && File.Exists(localHashFilePath))
+        if (File.Exists(verFilePath) && File.Exists(hashFilePath))
         {
-            var t1 = File.ReadAllTextAsync(localVerFilePath, System.Text.Encoding.UTF8);
-            var t2 = File.ReadAllTextAsync(localHashFilePath, System.Text.Encoding.UTF8);
-            yield return t1;
-            yield return t2;
-            ver = t1.Result;
-            hash = t2.Result;
-            initLocal = true;
-        }
-        else if (File.Exists(appVerFilePath) && File.Exists(appHashFilePath))
-        {
-            var t1 = File.ReadAllTextAsync(appVerFilePath, System.Text.Encoding.UTF8);
-            var t2 = File.ReadAllTextAsync(appHashFilePath, System.Text.Encoding.UTF8);
+            var t1 = File.ReadAllTextAsync(verFilePath, System.Text.Encoding.UTF8);
+            var t2 = File.ReadAllTextAsync(hashFilePath, System.Text.Encoding.UTF8);
             yield return t1;
             yield return t2;
             ver = t1.Result;
             hash = t2.Result;
         }
-        else
-        {
-            ver = hash = null;
-        }
+        else ver = hash = null;
         if (string.IsNullOrEmpty(ver) || string.IsNullOrEmpty(hash))
         {
-            Debug.LogError($"Cannot find Version or Hash file!!");
+            Debug.LogError($"Cannot find Version or Hash file[{(isLocal?"local":"app")}]!!");
             yield break;
         }
-
-        Catalog = AssetBundleCatalog.Parse(ver, hash);
+        var Catalog = AssetBundleCatalog.Parse(ver, hash);
         if (Catalog == null || Catalog.MainVersion == 0)
         {
             Debug.LogError($"InitABRefrence FAILED: mainVersion NOT valid]");
             yield break;
         }
-        Debug.Log($"Init version success!! [{Catalog.MainVersion}.{Catalog.SubVersion}.{Catalog.ResVersion}]");
 
-        string manifestPath = Path.Combine((initLocal ? localABDirectory : appABDirectory), ABDirectoryName);
+        string manifestPath = Path.Combine((isLocal ? localABDirectory : appABDirectory), ABDirectoryName);
         if (!File.Exists(manifestPath)) { Debug.Log($"InitAppAssetBundlesAsync FAILED!! manifest not found"); yield break; }
         var reqMainAB = AssetBundle.LoadFromFileAsync(manifestPath);
         yield return reqMainAB;
-        mainAB = reqMainAB.assetBundle;
+        var mainAB = reqMainAB.assetBundle;
 
         var reqManifest = mainAB.LoadAssetAsync<AssetBundleManifest>("AssetBundleManifest");
         yield return reqManifest;
-        manifest = reqManifest.asset as AssetBundleManifest;
+        var manifest = reqManifest.asset as AssetBundleManifest;
         if (manifest == null) { Debug.Log($"InitAppAssetBundlesAsync FAILED!! manifest not found"); yield break; }
 
-        yield return CoHandleAssetBundleManifest(manifest);
+        if (isLocal)
+        {
+            manifestLocal = manifest;
+            catalogLocal = Catalog;
+        }
+        else
+        {
+            manifestApp = manifest;
+            catalogApp = Catalog;
+        }
+        mainAB.Unload(false);
+
+        yield return CoHandleAssetBundleManifest(isLocal);
     }
     public void CheckUpdateAsync(System.Action<CheckVersionResult, string> onFinished)
     {
@@ -601,7 +520,7 @@ public class AssetBundleManager : MonoBehaviour
     }
     IEnumerator CoCheckUpdate(System.Action<CheckVersionResult, string> onFinished = null)
     {
-        int localMainVer = Catalog.MainVersion, localSubVer = Catalog.SubVersion, localResVer = Catalog.ResVersion,
+        int localMainVer = catalogLocal.MainVersion, localSubVer = catalogLocal.SubVersion, localResVer = catalogLocal.ResVersion,
             remoteMainVer = 0, remoteSubVer = 0, remoteResVer = 0;
 
         var remoteVersionPath = Path.Combine(remoteABDirectory, verFileName).Replace(@"\", "/");
@@ -645,7 +564,7 @@ public class AssetBundleManager : MonoBehaviour
             if (remoteInfo == null) { onFinished?.Invoke(CheckVersionResult.error, "Parse Remote ABHashInfo error"); yield break; };
             if (remoteInfo.type != ABType.Hotfix || remoteInfo.type != ABType.HotfixRestart) continue;
 
-            var localABFile = Path.Combine(localABDirectory, remoteInfo.abPath) + variantAB;
+            var localABFile = Path.Combine(localABDirectory, remoteInfo.abName) + variantAB;
             var tempABFile = localABFile + ABDownloadTask.TEMP_VARIANT;
             bool hasTemp = File.Exists(tempABFile), hasLocal = File.Exists(localABFile);
             if (!hasLocal)
@@ -663,7 +582,7 @@ public class AssetBundleManager : MonoBehaviour
                     if (size < 1) continue;
                     hash.size = size;
                     hash.hash = remoteInfo.hash;
-                    hash.abPath = remoteInfo.abPath;
+                    hash.abName = remoteInfo.abName;
                     hash.type = remoteInfo.type;
                     // tips: 未下载完的tmp文件如果被篡改可能导致无法继续下载, 可以通过检测文件完整性函数[CheckComplete]解决
                 }
@@ -672,8 +591,7 @@ public class AssetBundleManager : MonoBehaviour
             }
             else
             {
-                Dictionary<string, ABHashInfo> dicLocalHash = Catalog.bundles;
-                dicLocalHash.TryGetValue(remoteInfo.abPath, out var localInfo);
+                catalogLocal.bundles.TryGetValue(remoteInfo.abName, out var localInfo);
                 // 若本地缺少该项则直接重新下载，重新校验hash值可能消耗较多时间
                 if (localInfo == null) { updateABList.Add(remoteInfo); continue; }
                 // 检测是否需要更新
@@ -690,7 +608,7 @@ public class AssetBundleManager : MonoBehaviour
                     hash = new ABHashInfo();
                     hash.size = size;
                     hash.hash = remoteInfo.hash;
-                    hash.abPath = remoteInfo.abPath;
+                    hash.abName = remoteInfo.abName;
                     hash.type = remoteInfo.type;
                     hash.Encrypt = remoteInfo.Encrypt;
                 }
@@ -763,7 +681,7 @@ public class AssetBundleManager : MonoBehaviour
             var info = ABHashInfo.Parse(item);
             if (info != null)
             {
-                var url = Path.Combine(remoteABDirectory, info.abPath).Replace(@"\", "/") + variantAB;
+                var url = Path.Combine(remoteABDirectory, info.abName).Replace(@"\", "/") + variantAB;
                 urls.Add(url);
             }
         }
@@ -803,7 +721,7 @@ public class AssetBundleManager : MonoBehaviour
             fsVer.Write(reqVer.downloadHandler.data, 0, reqVer.downloadHandler.text.Length);
         }
         Debug.Log($"Update Version & Hash finished");
-        Catalog = AssetBundleCatalog.Parse(reqVer.downloadHandler.text, reqHash.downloadHandler.text);
+        catalogLocal = AssetBundleCatalog.Parse(reqVer.downloadHandler.text, reqHash.downloadHandler.text);
         reqVer.Dispose();
         reqHash.Dispose();
 
@@ -876,32 +794,6 @@ public class AssetBundleManager : MonoBehaviour
             onFinished?.Invoke(MARK_SUCCESS);
         }
     }
-    public void InitializeOnStartAsync(System.Action<string> onFinished = null)
-    {
-        var mainABPath = Path.Combine(localABDirectory, ABDirectoryName);
-        if (!File.Exists(mainABPath))
-        {
-            onFinished?.Invoke($"InitABRefrence FAILED: MainAB NOT found at path[{mainABPath}]");
-            return;
-        }
-        else
-        {
-            mainABPath = Path.Combine(appABDirectory, ABDirectoryName);
-            if (!File.Exists(mainABPath))
-            {
-                onFinished?.Invoke($"InitABRefrence FAILED: MainAB NOT found at path[{mainABPath}]");
-                return;
-            }
-        }
-        mainAB = AssetBundle.LoadFromFile(mainABPath);
-        if (mainAB == null) { onFinished?.Invoke("InitABRefrence FAILED: MainAB Null"); return; }
-        manifest = mainAB.LoadAsset<AssetBundleManifest>("AssetBundleManifest");
-        if (manifest == null) { onFinished?.Invoke("InitABRefrence FAILED: AssetBundleManifest Null"); return; }
-
-        HandleAssetBundleManifest(manifest);
-
-        onFinished?.Invoke("InitializeOnStart success");
-    }
     public IEnumerator CoInitializeOnStart(System.Action<string> onFinished = null)
     {
         var mainABPath = Path.Combine(localABDirectory, ABDirectoryName);
@@ -924,35 +816,36 @@ public class AssetBundleManager : MonoBehaviour
 
         var mReq = AssetBundle.LoadFromFileAsync(mainABPath);
         yield return mReq;
-        mainAB = mReq.assetBundle;
-        if (mainAB == null) { 
+        var mainABLocal = mReq.assetBundle;
+        if (mainABLocal == null) { 
             Debug.Log("InitABRefrence FAILED: MainAB Null");
             onFinished?.Invoke("InitABRefrence FAILED: MainAB Null");
             yield break; 
         }
 
-        var mReq2 = mainAB.LoadAssetAsync<AssetBundleManifest>("AssetBundleManifest");
+        var mReq2 = mainABLocal.LoadAssetAsync<AssetBundleManifest>("AssetBundleManifest");
         yield return mReq2;
-        manifest = mReq2.asset as AssetBundleManifest;
-        if (manifest == null) { 
+        manifestLocal = mReq2.asset as AssetBundleManifest;
+        if (manifestLocal == null) { 
             Debug.Log("InitABRefrence FAILED: AssetBundleManifest Null");
             onFinished?.Invoke("InitABRefrence FAILED: AssetBundleManifest Null");
             yield break;
         }
+        mainABLocal.Unload(false);
 
-        yield return CoHandleAssetBundleManifest(manifest);
+        yield return CoHandleAssetBundleManifest(true);
 
         Debug.Log("CoInitializeOnStart success");
         onFinished?.Invoke("CoInitializeOnStart success");
     }
     #endregion
 
-    #region DirectLoad
+    #region Direct
     public T GetAsset<T>(string assetName) where T : Object
     {
         T res = null;
 
-        if (!GetABNameByAssetName(assetName, out var bundleName)) return res;
+        if (!GetABNameByAssetName(ref assetName, out var bundleName)) return res;
 
         var abref = LoadAssetBundle(bundleName);
         if (abref == null)
@@ -966,13 +859,14 @@ public class AssetBundleManager : MonoBehaviour
     public UnityEngine.Object GetAsset(string assetName, System.Type type)
     {
         UnityEngine.Object res = null;
-        if (!GetABNameByAssetName(assetName, out var bundleName)) return res;
+        if (!GetABNameByAssetName(ref assetName, out var bundleName)) return res;
         var abref = LoadAssetBundle(bundleName);
         if (abref == null)
             return res;
         if (abref.bundle == null)
             return res;
         res = abref.bundle.LoadAsset(assetName, type);
+
         return res;
     }
     public AssetBundleRef LoadAssetBundle(string bundleName)
@@ -988,14 +882,29 @@ public class AssetBundleManager : MonoBehaviour
                 dependenciesList.Add(LoadAssetBundle(dependency));
             }
         }
-        string path = Path.Combine(localABDirectory, bundleName + variantAB);
-        var ab = AssetBundle.LoadFromFile(path);
+        dicABHashInfo.TryGetValue(bundleName, out var hashInfo);
+        string fileName = hashInfo.ABFileName;
+        string path = Path.Combine(hashInfo.type == ABType.Basic ? appABDirectory : localABDirectory, fileName);
+        if (!File.Exists(path))
+        {
+            if (hashInfo.type == ABType.BasicAndHotfix)
+            {
+                path = Path.Combine(appABDirectory, fileName);
+            }
+            else
+            {
+                Debug.LogError($"AssetBundle NOT found!! Path: [{path}]");
+                return null;
+            }
+        }
+        AssetBundle ab;
+        if (hashInfo.IsEncrypted) ab = LoadEncryptedAssetBundle(path);
+        else ab = AssetBundle.LoadFromFile(path);
         if (ab == null)
         {
-            Debug.Log("LoadAssetBundle FAILED at pat: " + path);
+            Debug.Log("LoadAssetBundle FAILED at path: " + path);
             return null;
         }
-        dicABHashInfo.TryGetValue(bundleName, out var hashInfo);
         var loaded = new AssetBundleRef(ab)
         {
             dependencies = dependenciesList,
@@ -1003,15 +912,6 @@ public class AssetBundleManager : MonoBehaviour
         };
         loadedAssetBundles[bundleName] = loaded;
         return loaded;
-    }
-    public AssetBundle LoadEncryptedAssetBundle(string path)
-    {
-        // 读取加密文件
-        byte[] encryptedData = File.ReadAllBytes(path);
-
-        var data = Helpers.DecryptAES(encryptedData, ABBuildConfig.BundleEncryptKey, ABBuildConfig.BundleEncryptIV);
-        var ab = AssetBundle.LoadFromMemory(data);
-        return ab;
     }
     #endregion
     #region AsyncLoad
@@ -1021,6 +921,7 @@ public class AssetBundleManager : MonoBehaviour
         if (string.IsNullOrEmpty(abName)) { progress?.Invoke(1); onLoaded?.Invoke("fail"); return; }
         LoadAssetBundleAsync(abName, (abr) =>
         {
+            if (abr.IsSingleAsset) { sceneName = abr.GetFirstAssetName(); }
             StartCoroutine(CoLoadScene(sceneName, mode, onLoaded, progress));
         });
     }
@@ -1030,26 +931,27 @@ public class AssetBundleManager : MonoBehaviour
         if (string.IsNullOrEmpty(abName)) { progress?.Invoke(1); onLoaded?.Invoke("fail"); return; }
         LoadAssetBundleAsync(abName, (abr) =>
         {
+            if (abr.IsSingleAsset) { sceneName = abr.GetFirstAssetName(); }
             StartCoroutine(CoLoadScene(sceneName, (LoadSceneMode)mode, onLoaded, progress));
         });
     }
     public void GetAssetAsync<T>(string assetName, System.Action<T> onGet) where T : Object
     {
-        dicAssetABName.TryGetValue(assetName.ToLower(), out var bundleName);
-        if (string.IsNullOrEmpty(bundleName)) { onGet?.Invoke(null); return; }
+        if (!GetABNameByAssetName(ref assetName, out string bundleName)) { onGet?.Invoke(null); return; }
         LoadAssetBundleAsync(bundleName, (abr) =>
         {
             if (abr == null) { onGet?.Invoke(null); return; }
+            if (abr.IsSingleAsset) { assetName = abr.GetFirstAssetName(); }
             StartCoroutine(CoLoadAsset(abr, assetName, onGet));
         });
     }
-    public void GetAssetAsync(string assetName, System.Action<UnityEngine.Object> onGet, System.Type assetType)
+    public void GetAssetAsync(string assetName, System.Type assetType, System.Action<UnityEngine.Object> onGet)
     {
-        dicAssetABName.TryGetValue(assetName.ToLower(), out var bundleName);
-        if (string.IsNullOrEmpty(bundleName)) { onGet?.Invoke(null); return; }
+        if (!GetABNameByAssetName(ref assetName, out string bundleName)) { onGet?.Invoke(null); return; }
         LoadAssetBundleAsync(bundleName, (abr) =>
         {
             if (abr == null) { onGet?.Invoke(null); return; }
+            if (abr.IsSingleAsset) { assetName = abr.GetFirstAssetName(); }
             StartCoroutine(CoLoadAsset(abr, assetName, assetType, onGet));
         });
     }
@@ -1057,38 +959,130 @@ public class AssetBundleManager : MonoBehaviour
     {
         StartCoroutine(CoLoadAssetBundleRef(bundleName, callback));
     }
-    public void LoadEncryptedAssetBundleAsync(string path, System.Action<AssetBundle> cb)
-    {
-        StartCoroutine(CoLoadEncryptedAssetBundle(path, cb));
-    }
     #endregion
     #region CoLoad
     public IEnumerator CoLoadAsset(string assetName, System.Action<UnityEngine.Object> callback)
     {
         UnityEngine.Object res = null;
 
-        dicAssetABName.TryGetValue(assetName.ToLower(), out var bundleName);
-        if (string.IsNullOrEmpty(bundleName)) { callback?.Invoke(res); yield break; };
+        if (!GetABNameByAssetName(ref assetName, out string bundleName)) { callback?.Invoke(res); yield break; }
 
         AssetBundleRef abref = null;
         yield return CoLoadAssetBundleRef(bundleName, (abr) => {
             abref = abr;
         });
         if (abref == null || abref.bundle == null) { callback?.Invoke(res); yield break; }
-        res = abref.bundle.LoadAsset(assetName);
+        if (abref.IsSingleAsset) { assetName = abref.GetFirstAssetName(); }
+        var op = abref.bundle.LoadAssetAsync(assetName);
+        yield return op;
+        res = op.asset;
         callback?.Invoke(res);
     }
-    public IEnumerator CoLoadEncryptedAssetBundle(string path, System.Action<AssetBundle> cb)
+    public IEnumerator CoLoadAssetBundleRef(string bundleName, System.Action<AssetBundleRef> callback)
     {
-        // 读取加密文件
-        var opRead = File.ReadAllBytesAsync(path);
-        yield return opRead;
-        byte[] encryptedAB = opRead.Result;
+        loadedAssetBundles.TryGetValue(bundleName, out var abr);
+        if (abr != null)
+        {
+            callback?.Invoke(abr);
+            yield break;
+        }
+        dicABDependencies.TryGetValue(bundleName, out var dependencies);
+        int dependencyCount = 0;
+        List<AssetBundleRef> dependenciesList = new List<AssetBundleRef>();
+        if (dependencies != null)
+        {
+            dependencyCount = dependencies.Count;
+            foreach (var dependency in dependencies)
+            {
+                yield return CoLoadAssetBundleRef(dependency, (ab) => { dependenciesList.Add(ab); });
+            }
+        }
 
-        var data = Helpers.DecryptAES(encryptedAB, ABBuildConfig.BundleEncryptKey, ABBuildConfig.BundleEncryptIV);
-        var opAB = AssetBundle.LoadFromMemoryAsync(data);
-        yield return opAB;
-        cb?.Invoke(opAB.assetBundle);
+        while (dependenciesList.Count < dependencyCount)
+            yield return null;
+
+        if (loadingAssetBundles.ContainsKey(bundleName))
+        {
+            loadingAssetBundles[bundleName] += callback;
+            yield break;
+        }
+
+        dicABHashInfo.TryGetValue(bundleName, out var hashInfo);
+        if (hashInfo == null) { callback?.Invoke(null); yield break; }
+        string path = Path.Combine(hashInfo.type == ABType.Basic ? appABDirectory : localABDirectory, hashInfo.ABFileName);
+        if (!File.Exists(path))
+        {
+            if (hashInfo.type == ABType.BasicAndHotfix)
+            {
+                path = Path.Combine(appABDirectory, bundleName) + variantAB;
+            }
+            else
+            {
+                Debug.LogError($"AssetBundle NOT found!! Path: [{path}]");
+                callback?.Invoke(null);
+                yield break;
+            }
+        }
+        AssetBundle ab = null;
+        loadingAssetBundles.Add(bundleName, null);
+        if (hashInfo.IsEncrypted)
+        {
+            yield return CoLoadEncryptedAssetBundle(path, a => ab = a);
+        }
+        else
+        {
+            AssetBundleCreateRequest request = AssetBundle.LoadFromFileAsync(path);
+            yield return request;
+            ab = request.assetBundle;
+        }
+        if (ab != null)
+        {
+            var loaded = new AssetBundleRef(ab)
+            {
+                dependencies = dependenciesList
+            };
+            loadedAssetBundles[bundleName] = loaded;
+            callback?.Invoke(loaded);
+            loadingAssetBundles[bundleName]?.Invoke(loaded);
+        }
+        else
+        {
+            callback?.Invoke(null);
+            loadingAssetBundles[bundleName]?.Invoke(null);
+            Debug.LogError("Failed to load AssetBundle at path: " + path);
+        }
+        loadingAssetBundles.Remove(bundleName);
+    }
+    IEnumerator CoLoadScene(string sceneName, LoadSceneMode mode = LoadSceneMode.Single, System.Action<string> onLoaded = null, System.Action<float> progress = null)
+    {
+        int disableProgress = 0;
+        var op = SceneManager.LoadSceneAsync(sceneName, mode);
+        op.allowSceneActivation = false;
+        int toProgress;
+        //op.progress 只能获取到90%，最后10%获取不到，需要自己处理
+        while (op.progress < 0.9f)
+        {
+            ////获取真实的加载进度
+            //toProgress = (int)(op.progress * 100);
+            //while (disableProgress < toProgress)
+            //{
+            //    ++disableProgress;
+            //    progress?.Invoke(disableProgress / 100.0f);//0.01开始
+            //    yield return new WaitForEndOfFrame();
+            //}
+            progress?.Invoke(op.progress / 100.0f);
+            yield return null;
+        }
+        //因为op.progress 只能获取到90%，所以后面的值不是实际的场景加载值了
+        toProgress = 100;
+        while (disableProgress < toProgress)
+        {
+            ++disableProgress;
+            progress?.Invoke(disableProgress / 100.0f);
+            yield return new WaitForEndOfFrame();
+        }
+        op.allowSceneActivation = true;
+        onLoaded?.Invoke("");
     }
     #endregion
 
@@ -1118,7 +1112,7 @@ public class AssetBundleCatalog
                 if (string.IsNullOrEmpty(line)) continue;
                 ABHashInfo info = ABHashInfo.Parse(line);
                 if (info == null) { Debug.Log($"Parse hash line[{i}] FAILED"); continue; }
-                res.bundles[info.abPath] = info;
+                res.bundles[info.abName] = info;
             }
         }
         catch

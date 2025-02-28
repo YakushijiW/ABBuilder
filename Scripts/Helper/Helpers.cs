@@ -3,7 +3,7 @@ using System.IO;
 using UnityEngine;
 using System.Text;
 using System;
-using UnityEngine.InputSystem;
+using System.Collections.Generic;
 
 public class Helpers
 {
@@ -33,6 +33,25 @@ public class Helpers
             str += s[i].ToString("X2");
         }
         return str;
+    }
+    public static void HandleFilesInDirectory(DirectoryInfo dir, bool isTop, System.Action<FileInfo> handle, 
+        string pattern = null, List<string> ignorePostfix = null, List<string> ignoreDirectory = null)
+    {
+        foreach (var file in dir.GetFiles(string.IsNullOrEmpty(pattern) ? "*" : pattern, SearchOption.TopDirectoryOnly))
+        {
+            if (file.Extension == ".meta") continue;
+            if (ignorePostfix != null && ignorePostfix.Contains(file.Extension)) continue;
+
+            handle?.Invoke(file);
+        }
+        if (!isTop)
+        {
+            foreach (var d in dir.GetDirectories())
+            {
+                if (ignoreDirectory != null && ignoreDirectory.Contains(d.FullName)) continue;
+                HandleFilesInDirectory(d, false, handle, pattern, ignorePostfix, ignoreDirectory);
+            }
+        }
     }
 
     // 加密函数
@@ -127,6 +146,33 @@ public class Helpers
                 decryptedData = decryptor.TransformFinalBlock(actualData, 0, actualData.Length);
             }
             return decryptedData;
+        }
+    }
+
+    public static class ByteFormatter
+    {
+        private static readonly string[] Units = { "B", "KB", "MB", "GB" };
+        private static readonly ulong[] Factors = { 1, 1L << 10, 1L << 20, 1L << 30 };
+        public static string FormatBytes(ulong bytes, int decimalPlaces = 2)
+        {
+            if (bytes == 0) return "0 B";
+
+            for (int i = Units.Length - 1; i >= 0; i--)
+            {
+                if (bytes < Factors[i]) continue;
+
+                double value = (double)bytes / Factors[i];
+                return FormatNumber(value, decimalPlaces) + " " + Units[i];
+            }
+            return bytes.ToString("0") + " B";
+        }
+        private static string FormatNumber(double value, int decimalPlaces)
+        {
+            string format = decimalPlaces > 0
+                ? $"0.{new string('0', decimalPlaces)}"
+                : "0";
+
+            return value.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
         }
     }
 }

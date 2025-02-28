@@ -12,6 +12,10 @@ public enum ABType
     /// </summary>
     Basic,
     /// <summary>
+    /// 同时存在于AppPath，LocalPath目录，优先LocalPath
+    /// </summary>
+    BasicAndHotfix,
+    /// <summary>
     /// 从服务器下载，保存在LocalPath。
     /// </summary>
     Hotfix,
@@ -29,7 +33,8 @@ public class ABBuildConfig
 {
     public const string VERSION_FILE_NAME = "ver.txt";
     public const string HASH_FILE_NAME = "hash.txt";
-    public const string VARIANT_AB = ".asset";
+    public const string VARIANT_AB = ".ab";
+    public const string VARIANT_AB_ENCRYPT = "";
 
     public const char HASH_FILE_SPLITER = '\n';
     public const char VERSION_FILE_SPLITER = '.';
@@ -70,5 +75,6 @@ public class BundleData
     public string bundleName = "";
     public List<string> directories = new List<string>();
     public ABType bundleType;
+    public bool packTogether = true;
     public uint encrypt = 0;
 }

@@ -92,7 +92,6 @@ public class AssetBundleManager : MonoBehaviour
     {
         // 读取加密文件
         byte[] encryptedData = File.ReadAllBytes(path);
-
         var data = Helpers.DecryptAES(encryptedData, ABBuildConfig.BundleEncryptKey, ABBuildConfig.BundleEncryptIV);
         var ab = AssetBundle.LoadFromMemory(data);
         return ab;
@@ -156,6 +155,7 @@ public class AssetBundleManager : MonoBehaviour
             AssetBundle ab = null;
             if (abInfo.IsEncrypted)
             {
+                abPath = abPath.Replace(variantAB, ABBuildConfig.VARIANT_AB_ENCRYPT);
                 yield return CoLoadEncryptedAssetBundle(abPath, a => ab = a);
             }
             else
@@ -224,7 +224,6 @@ public class AssetBundleManager : MonoBehaviour
     }
     public bool UnloadAssetBundle(string abName, bool unloadAsset = false)
     {
-        if (!abName.EndsWith(variantAB)) { abName += variantAB; }
         if (loadedAssetBundles.TryGetValue(abName, out var abref))
         {
             if (abref.type == ABType.Basic) return false;
@@ -242,7 +241,6 @@ public class AssetBundleManager : MonoBehaviour
     }
     public void UnloadAssetBundleAsync(string abName, bool unloadAsset = false, System.Action<string, bool> callback = null)
     {
-        if (!abName.EndsWith(variantAB)) { abName += variantAB; }
         if (loadedAssetBundles.TryGetValue(abName, out var abref))
         {
             abref.bundle.UnloadAsync(unloadAsset).completed += (op) =>
@@ -261,7 +259,6 @@ public class AssetBundleManager : MonoBehaviour
     }
     public IEnumerator CoUnloadAssetBundle(string abName, bool unloadAsset = false, System.Action<string, bool> callback = null)
     {
-        if (!abName.EndsWith(variantAB)) { abName += variantAB; }
         if (loadedAssetBundles.TryGetValue(abName, out var abref))
         {
             var op = abref.bundle.UnloadAsync(unloadAsset);
@@ -270,7 +267,7 @@ public class AssetBundleManager : MonoBehaviour
             {
                 r.touchCount--;
                 if (r.touchCount == 0)
-                    UnloadAssetBundleAsync(r.bundle.name, unloadAsset, callback); // 待测试
+                    yield return CoUnloadAssetBundle(r.bundle.name, unloadAsset, callback); // 待测试
             }
             loadedAssetBundles.Remove(abName);
             callback?.Invoke(abName, true);
@@ -311,6 +308,132 @@ public class AssetBundleManager : MonoBehaviour
     {
         if (catalogLocal == null) { return "内测版本"; }
         return $"{catalogLocal.MainVersion}.{catalogLocal.SubVersion}.{catalogLocal.ResVersion}";
+    }
+    #endregion
+
+    #region Seperate Bundle Support
+    Dictionary<string, List<AssetBundleRef>> dicSeperates;
+    public void InitSeperateBundleModuleAsync(string seperateBundleName, System.Action<string> onFinished = null)
+    {
+        if (dicSeperates == null)
+            dicSeperates = new Dictionary<string, List<AssetBundleRef>>();
+        StartCoroutine(CoInitSeperateBundleModule(seperateBundleName, onFinished));
+    }
+    public IEnumerator CoInitSeperateBundleModule(string seperateBundleName, System.Action<string> onFinished = null)
+    {
+        if (dicSeperates.TryGetValue(seperateBundleName, out var listAbr))
+        {
+            onFinished?.Invoke("init already finished");
+            yield break;
+        }
+        seperateBundleName = seperateBundleName.ToLower();
+        //dicABHashInfo.TryGetValue(separateBundleName, out var hashInfo);
+        var localABPath = Path.Combine(localABDirectory, seperateBundleName);
+        var appABPath = Path.Combine(localABDirectory, seperateBundleName);
+        var finalABPath = "";
+        if (Directory.Exists(localABPath))
+        {
+            finalABPath = localABPath;
+        }
+        else if (Directory.Exists(appABPath))
+        {
+            finalABPath = appABPath;
+        }
+        else
+        {
+            onFinished?.Invoke("");
+            Debug.Log($"no seperate bundle name: {seperateBundleName}");
+            yield break;
+        }
+        List<AssetBundleRef> abrList = new List<AssetBundleRef>();
+        var di = new DirectoryInfo(finalABPath.Replace("/", @"\"));
+        string msg = "";
+        foreach (var abFile in di.GetFiles("*"+ABBuildConfig.VARIANT_AB, SearchOption.AllDirectories))
+        {
+            var abName = seperateBundleName + "/" + abFile.Name.Replace(abFile.Extension, "");
+            yield return CoLoadAssetBundleRef(abName, (abr) =>
+            {
+                if (abr != null)
+                {
+                    abrList.Add(abr);
+                    msg += abr.GetFirstAssetName() + ',';
+                }
+                else
+                {
+                    Debug.LogError($"Init Seperate Bundle FAILED: not found bundle [{abName}]");
+                }
+            });
+        }
+        if (abrList.Count > 0)
+            dicSeperates.Add(seperateBundleName, abrList);
+        if (msg.EndsWith(',')) msg = msg.Remove(msg.Length - 1, 1);
+        onFinished?.Invoke(msg);
+        yield break;
+    }
+    public void DisposeSeperateBundleModuleAsync(string seperateBundleName, System.Action<string> onFinished = null)
+    {
+        if (dicSeperates == null)
+            dicSeperates = new Dictionary<string, List<AssetBundleRef>>();
+        StartCoroutine(CoDisposeSeperateBundleModule(seperateBundleName, onFinished));
+    }
+    public IEnumerator CoDisposeSeperateBundleModule(string seperateBundleName, System.Action<string> onFinished = null)
+    {
+        if (dicSeperates.TryGetValue(seperateBundleName, out var abrList))
+        {
+            int finishCount = 0;
+            int allCount = abrList.Count;
+            string msg = "";
+            foreach (var assetBundleRef in abrList)
+            {
+                yield return CoUnloadAssetBundle(assetBundleRef.bundle.name.Replace(variantAB, ""), false, (abName, suc) =>
+                {
+                    if (suc)
+                    {
+                        msg += abName + ',';
+                        finishCount++;
+                    }
+                    else
+                    {
+                        msg += assetBundleRef.bundle.name + "_FAILED" + ',';
+                    }
+                });
+            }
+            if (msg.EndsWith(',')) msg = msg.Remove(msg.Length - 1, 1);
+            onFinished?.Invoke(msg);
+        }
+        else
+        {
+            onFinished?.Invoke("");
+            Debug.Log($"SeperateBundleName Not found: {seperateBundleName}");
+        }
+        yield break;
+    }
+    public void GetAssetFromSepBundleAsync(string bundleName, System.Action<Object> callback, System.Type type = null)
+    {
+        if (callback == null) return;
+        bundleName = bundleName.ToLower();
+        var arr = bundleName.Split('/');
+        var dirName = arr[0];
+        var abName = arr[^1];
+        if (dicSeperates.TryGetValue(dirName, out var abrList))
+        {
+            var abr = abrList.Find((a) =>
+            {
+                return a.bundle.name == bundleName + variantAB;
+            });
+            if (abr == null)
+            {
+                callback(null);
+                Debug.LogWarning($"Seperate cell bundle not found: {bundleName}");
+                return;
+            }
+            var op = abr.bundle.LoadAssetAsync(abr.GetFirstAssetName(), type);
+            op.completed += (a) =>
+            {
+                callback(op.asset);
+            };
+        }
+        else callback(null);
     }
     #endregion
 
@@ -1027,6 +1150,7 @@ public class AssetBundleManager : MonoBehaviour
         loadingAssetBundles.Add(bundleName, null);
         if (hashInfo.IsEncrypted)
         {
+            path = path.Replace(variantAB, ABBuildConfig.VARIANT_AB_ENCRYPT);
             yield return CoLoadEncryptedAssetBundle(path, a => ab = a);
         }
         else

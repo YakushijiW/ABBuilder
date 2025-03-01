@@ -78,28 +78,42 @@ public class Helpers
             }
         }
     }
-    // 加密函数
     public static byte[] EncryptAES(byte[] data, string Key, string IV)
     {
-        if (Key.Length != IV.Length && IV.Length != 16) { Debug.Log($"byte length is NOT 16"); return null; }
+        byte[] ivBytes = Encoding.UTF8.GetBytes(IV);
+        byte[] keyBytes = Encoding.UTF8.GetBytes(Key);
 
-        byte[] iv = System.Text.Encoding.UTF8.GetBytes(IV);
-        byte[] key = System.Text.Encoding.UTF8.GetBytes(Key);
-        // 使用 AES 加密（示例）
+        // 校验密钥和IV的字节长度
+        if (keyBytes.Length != 16 && keyBytes.Length != 24 && keyBytes.Length != 32)
+        {
+            Debug.LogError("密钥长度必须为 16、24 或 32 字节（对应 AES-128/192/256）");
+            return null;
+        }
+        if (ivBytes.Length != 16)
+        {
+            Debug.LogError("IV 必须为 16 字节");
+            return null;
+        }
+
         using (Aes aes = Aes.Create())
         {
-            aes.Key = key;
-            aes.IV = iv;
-            byte[] result = null;
-            using (ICryptoTransform encryptor = aes.CreateEncryptor())
+            aes.Key = keyBytes;
+            aes.IV = ivBytes;
+            aes.Padding = PaddingMode.PKCS7;
+            aes.Mode = CipherMode.CBC;
+
+            using (MemoryStream msEncrypt = new MemoryStream())
             {
-                var encryptedData = encryptor.TransformFinalBlock(data, 0, data.Length);
-                // 将 IV 和加密数据合并写入文件
-                result = new byte[aes.IV.Length + encryptedData.Length];
-                Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
-                Buffer.BlockCopy(encryptedData, 0, result, aes.IV.Length, encryptedData.Length);
+                // 写入 IV 到加密数据头部（可选，若需要动态IV）
+                // msEncrypt.Write(aes.IV, 0, aes.IV.Length);
+
+                using (CryptoStream csEncrypt = new CryptoStream(msEncrypt, aes.CreateEncryptor(), CryptoStreamMode.Write))
+                {
+                    csEncrypt.Write(data, 0, data.Length);
+                    csEncrypt.FlushFinalBlock(); // 关键：确保数据完整写入
+                }
+                return msEncrypt.ToArray();
             }
-            return result;
         }
     }
     // 解密函数
@@ -125,27 +139,81 @@ public class Helpers
         }
     }
     // 解密函数
-    public static byte[] DecryptAES(byte[] data, string Key, string IV)
-    {
-        if (Key.Length != IV.Length && IV.Length != 16) return null;
-        // 提取 IV（AES 的 IV 长度通常为 16 字节）
-        byte[] iv = System.Text.Encoding.UTF8.GetBytes(IV);
-        byte[] key = System.Text.Encoding.UTF8.GetBytes(Key);
-        System.Buffer.BlockCopy(data, 0, iv, 0, iv.Length);
-        byte[] actualData = new byte[data.Length - iv.Length];
-        System.Buffer.BlockCopy(data, iv.Length, actualData, 0, actualData.Length);
+    //public static byte[] DecryptAES(byte[] data, string Key, string IV)
+    //{
+    //    if (Key.Length != IV.Length && IV.Length != 16) return null;
+    //    // 提取 IV（AES 的 IV 长度通常为 16 字节）
+    //    byte[] iv = System.Text.Encoding.UTF8.GetBytes(IV);
+    //    byte[] key = System.Text.Encoding.UTF8.GetBytes(Key);
+    //    System.Buffer.BlockCopy(data, 0, iv, 0, iv.Length);
+    //    byte[] actualData = new byte[data.Length - iv.Length];
+    //    System.Buffer.BlockCopy(data, iv.Length, actualData, 0, actualData.Length);
 
-        // 解密数据
+    //    // 解密数据
+    //    using (Aes aes = Aes.Create())
+    //    {
+    //        aes.Key = key;
+    //        aes.IV = iv;
+    //        aes.Padding = PaddingMode.PKCS7;
+    //        aes.Mode = CipherMode.CBC;
+    //        byte[] decryptedData = null;
+    //        //using (ICryptoTransform decryptor = aes.CreateDecryptor(aes.Key, aes.IV)) // 创建解密器
+    //        //{
+    //        //    decryptedData = decryptor.TransformFinalBlock(actualData, 0, actualData.Length);
+    //        //}
+    //        ICryptoTransform decryptor = aes.CreateDecryptor(aes.Key, aes.IV);
+    //        using (MemoryStream msDecrypt = new MemoryStream(data))
+    //        {
+    //            using (CryptoStream csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read))
+    //            {
+    //                //using (StreamReader srDecrypt = new StreamReader(csDecrypt))
+    //                //{
+    //                //    return srDecrypt.ReadToEnd();
+    //                //}
+    //                using (MemoryStream outputStream = new MemoryStream())
+    //                {
+    //                    csDecrypt.CopyTo(outputStream);
+    //                    decryptedData = outputStream.ToArray();
+    //                }
+    //            }
+    //        }
+    //        return decryptedData;
+    //    }
+    //}
+    public static byte[] DecryptAES(byte[] encryptedData, string Key, string IV)
+    {
+        byte[] ivBytes = Encoding.UTF8.GetBytes(IV);
+        byte[] keyBytes = Encoding.UTF8.GetBytes(Key);
+        // 校验密钥和IV的字节长度
+        if (keyBytes.Length != 16 && keyBytes.Length != 24 && keyBytes.Length != 32)
+        {
+            Debug.LogError("密钥长度必须为 16、24 或 32 字节（对应 AES-128/192/256）");
+            return null;
+        }
+        if (ivBytes.Length != 16)
+        {
+            Debug.LogError("IV 必须为 16 字节");
+            return null;
+        }
+
         using (Aes aes = Aes.Create())
         {
-            aes.Key = key;
-            aes.IV = iv;
-            byte[] decryptedData = null;
-            using (ICryptoTransform decryptor = aes.CreateDecryptor()) // 创建解密器
+            aes.Key = keyBytes;
+            aes.IV = ivBytes;
+            aes.Padding = PaddingMode.PKCS7;
+            aes.Mode = CipherMode.CBC;
+
+            using (MemoryStream msDecrypt = new MemoryStream(encryptedData))
             {
-                decryptedData = decryptor.TransformFinalBlock(actualData, 0, actualData.Length);
+                using (CryptoStream csDecrypt = new CryptoStream(msDecrypt, aes.CreateDecryptor(), CryptoStreamMode.Read))
+                {
+                    using (MemoryStream outputStream = new MemoryStream())
+                    {
+                        csDecrypt.CopyTo(outputStream);
+                        return outputStream.ToArray();
+                    }
+                }
             }
-            return decryptedData;
         }
     }
 

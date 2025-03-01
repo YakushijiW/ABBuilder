@@ -638,10 +638,12 @@ public class ABBuildEditor : Editor
         var cfg = GetBuilderConfig();
         if (cfg == null) { Debug.LogError($"DeleteManifestFiles error: config file NOT found"); return; }
         string buildPath = cfg.FinalOutputPath;
-        string pathSource = buildPath;
-        string pathTarget = ABBuildConfig.LocalABDirectory;
+        string pathSource = buildPath.Replace("/",@"\");
+        string pathTarget = ABBuildConfig.LocalABDirectory.Replace("/", @"\");
         try
         {
+            if (!Directory.Exists(pathTarget))
+                Directory.CreateDirectory(pathTarget);
             CopyDirectory(pathSource, pathTarget);
             Debug.Log($"Copy Hotfix AssetBundles to Local Path: Finished");
         }

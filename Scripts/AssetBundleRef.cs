@@ -1,25 +1,27 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
-
-public class AssetBundleRef
+namespace ABBuilder
 {
-    public AssetBundle bundle;
-    public ABType type;
-    public List<AssetBundleRef> dependencies;
-    public int touchCount = 0;
-    public bool IsSingleAsset
+    public class AssetBundleRef
     {
-        get
+        public AssetBundle bundle;
+        public ABType type;
+        public List<AssetBundleRef> dependencies;
+        public int touchCount = 0;
+        public bool IsSingleAsset
         {
-            return bundle.name.Contains('/');
+            get
+            {
+                return bundle.name.Contains('/');
+            }
         }
-    }
-    public string GetFirstAssetName()
-    {
-        return bundle.GetAllAssetNames()[0];
-    }
-    public AssetBundleRef(AssetBundle bundle)
-    {
-        this.bundle = bundle;
+        public string GetFirstAssetName()
+        {
+            return bundle.GetAllAssetNames()[0];
+        }
+        public AssetBundleRef(AssetBundle bundle)
+        {
+            this.bundle = bundle;
+        }
     }
 }
